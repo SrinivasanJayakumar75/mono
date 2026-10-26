@@ -1,0 +1,20 @@
+# Local environment / secrets
+backend/.env
+backend/.env.local
+*.local.env
+
+# Backend build + runtime data
+backend/build/
+backend/.gradle/
+backend/data/
+
+# Frontend
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+
+# Logs and editor files
+*.log
+.DS_Store
+.vscode/
+.idea/

@@ -1,0 +1,127 @@
+server:
+  port: ${SERVER_PORT:8080}
+  shutdown: graceful
+
+spring:
+  config:
+    # Load the local, gitignored .env whether the app is started from the
+    # repository root (IDE) or from backend/ (scripts). Real OS environment
+    # variables still take precedence over these defaults.
+    import:
+      - optional:file:./.env[.properties]
+      - optional:file:./backend/.env[.properties]
+  application:
+    name: monotron
+  autoconfigure:
+    # JWT only: no form login and no generated in-memory user.
+    exclude: org.springframework.boot.autoconfigure.security.servlet.UserDetailsServiceAutoConfiguration
+  datasource:
+    url: ${DATABASE_URL:jdbc:postgresql://localhost:5432/monotron}
+    username: ${DATABASE_USER:monotron}
+    password: ${DATABASE_PASSWORD:monotron}
+    hikari:
+      pool-name: monotron-pool
+      maximum-pool-size: ${DATABASE_POOL_SIZE:10}
+      minimum-idle: 2
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    # The database already exists (it is the source of the V1 baseline dump),
+    # so V1 is adopted as the baseline instead of being replayed.
+    baseline-on-migrate: true
+    baseline-version: 1
+    baseline-description: Existing Monotron schema
+    validate-on-migrate: true
+  servlet:
+    multipart:
+      max-file-size: 25MB
+      max-request-size: 26MB
+  jackson:
+    default-property-inclusion: always
+    serialization:
+      write-dates-as-timestamps: false
+      write-durations-as-timestamps: false
+
+monotron:
+  jwt:
+    secret: ${MONOTRON_JWT_SECRET:monotron-dev-secret-change-me-in-production-0123456789abcdef}
+    access-token-ttl: ${MONOTRON_ACCESS_TTL:15m}
+    refresh-token-ttl: ${MONOTRON_REFRESH_TTL:30d}
+    issuer: monotron
+  cors:
+    allowed-origins: ${MONOTRON_CORS_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
+  google:
+    # Public OAuth 2.0 Web client id. Leave empty to hide Google sign-in.
+    client-id: ${GOOGLE_CLIENT_ID:}
+  storage:
+    directory: ${MONOTRON_STORAGE_DIR:./data/uploads}
+    max-upload-bytes: 26214400
+  tenancy:
+    # Every tenant-scoped transaction is downgraded to this non-superuser role
+    # so that PostgreSQL Row Level Security is actually enforced. Leave empty
+    # to disable the downgrade (not recommended).
+    role: ${MONOTRON_TENANT_ROLE:monotron_app}
+  ai:
+    provider: ${MONOTRON_AI_PROVIDER:auto}
+    openai:
+      base-url: ${OPENAI_BASE_URL:https://api.openai.com/v1}
+      api-key: ${OPENAI_API_KEY:}
+      chat-model: ${OPENAI_CHAT_MODEL:gpt-4o-mini}
+      embedding-model: ${OPENAI_EMBEDDING_MODEL:text-embedding-3-small}
+      timeout: ${OPENAI_TIMEOUT:60s}
+    chunking:
+      chunk-size: 1100
+      chunk-overlap: 200
+    retrieval:
+      top-k: 6
+      min-score: 0.15
+  billing:
+    # Set BILLING_ENFORCE=false only for local development without Razorpay keys.
+    enforce: ${BILLING_ENFORCE:true}
+    provider: ${RAZORPAY_PROVIDER:razorpay}
+    key-id: ${RAZORPAY_KEY_ID:}
+    key-secret: ${RAZORPAY_KEY_SECRET:}
+    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+    api-base-url: ${RAZORPAY_API_BASE_URL:https://api.razorpay.com/v1}
+    currency: ${RAZORPAY_CURRENCY:INR}
+    # Amounts are in paise: 39900 = ₹399, 399000 = ₹3,990.
+    monthly-amount: ${RAZORPAY_MONTHLY_AMOUNT:39900}
+    yearly-amount: ${RAZORPAY_YEARLY_AMOUNT:399000}
+    trial-days: ${MONOTRON_TRIAL_DAYS:3}
+    monthly-cycles: ${RAZORPAY_MONTHLY_CYCLES:100}
+    yearly-cycles: ${RAZORPAY_YEARLY_CYCLES:10}
+    timeout: ${RAZORPAY_TIMEOUT:30s}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: never
+      probes:
+        enabled: true
+  info:
+    env:
+      enabled: true
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+    operations-sorter: alpha
+    tags-sorter: alpha
+
+info:
+  app:
+    name: Monotron
+    description: Multi-tenant AI customer support platform
+    version: 0.1.0
+
+logging:
+  level:
+    root: INFO
+    com.monotron: ${MONOTRON_LOG_LEVEL:INFO}
+    org.springframework.jdbc.core: WARN
