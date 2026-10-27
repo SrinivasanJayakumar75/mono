@@ -1,6 +1,12 @@
-# Local environment / secrets
+
+# Environment variables / secrets
+.env
+.env.*
+!.env.example
 backend/.env
-backend/.env.local
+backend/.env.*
+frontend/.env
+frontend/.env.*
 *.local.env
 
 # Backend build + runtime data
@@ -8,13 +14,21 @@ backend/build/
 backend/.gradle/
 backend/data/
 
-# Frontend
+# Frontend dependencies and build output
 frontend/node_modules/
 frontend/.next/
 frontend/out/
 
-# Logs and editor files
+# Dependencies and build output
+node_modules/
+.next/
+build/
+dist/
+
+# Logs
 *.log
+
+# OS and editor files
 .DS_Store
 .vscode/
 .idea/
