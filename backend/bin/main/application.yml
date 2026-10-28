@@ -49,7 +49,7 @@ monotron:
     refresh-token-ttl: ${MONOTRON_REFRESH_TTL:30d}
     issuer: monotron
   cors:
-    allowed-origins: ${MONOTRON_CORS_ORIGINS:https://monotron.in,https://www.monotron.in}
+    allowed-origins: ${MONOTRON_CORS_ORIGINS:http://localhost:3000,http://127.0.0.1:3000}
   google:
     # Public OAuth 2.0 Web client id. Leave empty to hide Google sign-in.
     client-id: ${GOOGLE_CLIENT_ID:}
