@@ -222,9 +222,21 @@ $visitor = $null
 Check 'widget config and session are public' {
     $config = Invoke-Api -Method Get -Path "/widget/$appId/config"
     Assert-True ($config.appId -eq $appId) 'config app mismatch'
+    Assert-True ($config.autoOpen -eq $true) 'auto-open is not enabled by default'
     $script:widgetSession = Invoke-Api -Method Post -Path "/widget/$appId/session" -Body @{ name = 'Ada Lovelace'; email = "ada$stamp@example.com" }
     $script:visitor = $script:widgetSession.visitorId
     Assert-True ($script:visitor.Length -gt 10) 'no visitor id'
+}
+
+Check 'widget auto-open can be configured' {
+    $settings = Invoke-Api -Method Get -Path '/widget-settings' -Headers $auth
+    Assert-True ($settings.autoOpen -eq $true) 'auto-open should default to on'
+    $off = Invoke-Api -Method Put -Path '/widget-settings' -Headers $auth -Body @{ autoOpen = $false }
+    Assert-True ($off.autoOpen -eq $false) 'auto-open was not turned off'
+    $publicOff = Invoke-Api -Method Get -Path "/widget/$appId/config"
+    Assert-True ($publicOff.autoOpen -eq $false) 'public config did not reflect auto-open off'
+    $on = Invoke-Api -Method Put -Path '/widget-settings' -Headers $auth -Body @{ autoOpen = $true }
+    Assert-True ($on.autoOpen -eq $true) 'auto-open was not restored'
 }
 
 $conversationId = $null

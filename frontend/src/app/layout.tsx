@@ -1,5 +1,6 @@
 import type { Metadata, Viewport } from "next";
 
+import { MonotronWidget } from "@/components/monotron-widget";
 import { ToastProvider } from "@/components/ui";
 import { AuthProvider } from "@/lib/auth";
 import { BillingProvider } from "@/lib/billing";
@@ -48,6 +49,8 @@ export default function RootLayout({
             <BillingProvider>{children}</BillingProvider>
           </AuthProvider>
         </ToastProvider>
+
+        <MonotronWidget />
       </body>
     </html>
   );

@@ -297,8 +297,8 @@ public class AuthService {
 
         jdbc.update("""
                 insert into widget_settings (app_id, workspace_name, greeting, subtitle, color, intro_message,
-                                            input_placeholder, show_branding, updated_at)
-                values (?, ?, ?, ?, ?, ?, ?, true, now())
+                                            input_placeholder, show_branding, auto_open, updated_at)
+                values (?, ?, ?, ?, ?, ?, ?, true, true, now())
                 """, appId, workspaceName, DEFAULT_GREETING, DEFAULT_SUBTITLE, DEFAULT_COLOR, DEFAULT_INTRO,
                 DEFAULT_PLACEHOLDER);
         return appId;

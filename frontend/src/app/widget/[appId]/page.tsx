@@ -148,6 +148,7 @@ export default function WidgetPage() {
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const refreshSeq = useRef(0);
+  const autoOpenApplied = useRef(false);
 
   // Detect iframe embedding so the page can render as a bare widget.
   useEffect(() => {
@@ -183,6 +184,15 @@ export default function WidgetPage() {
       cancelled = true;
     };
   }, [appId]);
+
+  // Open the messenger automatically when the workspace enables it. The ref
+  // keeps this to one action per page load, so closing the panel does not make
+  // it pop back open when another state update happens.
+  useEffect(() => {
+    if (!config || config.autoOpen === false || autoOpenApplied.current) return;
+    autoOpenApplied.current = true;
+    setOpen(true);
+  }, [config]);
 
   // restore visitor identity
   useEffect(() => {

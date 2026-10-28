@@ -166,12 +166,14 @@ Request `{ "name": "Support", "description": "Tier 1" }` → `200` team object.
 { "appId": "32-hex", "workspaceName": "Acme Support", "greeting": "Hi there 👋",
   "subtitle": "We typically reply in a few minutes.", "color": "#4F46E5",
   "introMessage": "Ask us anything — we're here to help.", "inputPlaceholder": "Send a message…",
-  "showBranding": true, "aiEnabled": true, "autoReply": true }
+  "showBranding": true, "autoOpen": true, "aiEnabled": true, "autoReply": true }
 ```
 
 ### PUT `/api/widget-settings`
 Request — any subset of `workspaceName`, `greeting`, `subtitle`, `color`, `introMessage`,
-`inputPlaceholder`, `showBranding`, `aiEnabled`, `autoReply` → `200` full settings object.
+`inputPlaceholder`, `showBranding`, `autoOpen`, `aiEnabled`, `autoReply` → `200` full
+settings object. `autoOpen` controls whether the messenger panel opens by itself when the
+embedded widget loads.
 
 ---
 
@@ -392,7 +394,7 @@ Request `{ "question": "How do I reset my password?", "conversationId": "uuid?" 
 { "appId": "32-hex", "workspaceName": "Acme Support", "greeting": "Hi there 👋",
   "subtitle": "We typically reply in a few minutes.", "color": "#4F46E5",
   "introMessage": "Ask us anything — we're here to help.",
-  "inputPlaceholder": "Send a message…", "showBranding": true }
+  "inputPlaceholder": "Send a message…", "showBranding": true, "autoOpen": true }
 ```
 
 ### GET `/api/widget/{appId}/content`

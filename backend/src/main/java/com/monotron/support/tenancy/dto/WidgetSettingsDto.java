@@ -12,6 +12,7 @@ public record WidgetSettingsDto(
         String introMessage,
         String inputPlaceholder,
         boolean showBranding,
+        boolean autoOpen,
         boolean aiEnabled,
         boolean autoReply) {
 }

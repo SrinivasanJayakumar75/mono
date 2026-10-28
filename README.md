@@ -22,7 +22,7 @@ db/         database helpers (the live schema is managed by Flyway in the backen
 | --- | --- |
 | Auth | Email + password (BCrypt) or Google sign-in (Google Identity Services ID token verified server-side). Short-lived access JWT (15 min, claims `sub`, `wid`, `role`, `email`, `name`) plus an opaque refresh token that is stored SHA-256-hashed and rotated on every refresh. |
 | Tenancy | PostgreSQL Row Level Security. The app connects as the owner (`monotron`), but every tenant-bound request runs in a transaction that does `SET LOCAL ROLE monotron_app` + `set_config('app.workspace_id', ?, true)`. The restricted role cannot see other tenants' rows, and a trigger stamps inserts with the bound workspace even if a client supplies a foreign id. |
-| Public widget | `/api/widget/{appId}/**` is unauthenticated. The filter resolves `appId -> workspace_id` through the unprotected `app_workspace_lookup` bridge, then binds that tenant for the request. |
+| Public widget | `/api/widget/{appId}/**` is unauthenticated. The filter resolves `appId -> workspace_id` through the unprotected `app_workspace_lookup` bridge, then binds that tenant for the request. The messenger can auto-open its chat panel when the page loads; toggle this under **Settings → Messenger widget**. |
 | Widget help center | Blogs, FAQs and announcements live in `widget_content`, separate from knowledge-base articles. Settings manages drafts and publishing through `/api/widget-content`; the public widget reads published rows from `/api/widget/{appId}/content`. |
 | Knowledge base | PDF upload (max 25 MB) -> PDFBox text extraction -> overlapping chunking -> embeddings -> `content_chunks` with a pgvector column. Ingestion is asynchronous; poll the document until `READY`/`FAILED`. |
 | AI | Provider `auto`: uses any OpenAI-compatible endpoint when `OPENAI_API_KEY` is set, otherwise bundled local providers (deterministic hashed embeddings + a grounded extractive answer composer) so the whole stack runs offline. Retrieval is cosine similarity via `1 - (embedding <=> ?::vector)`. |
@@ -217,7 +217,9 @@ The public messenger for a workspace is at `http://localhost:3000/widget/<appId>
 is shown under **Settings**. The widget opens on chat; the menu icon in its header opens the
 help center, where visitors can search and browse published blogs, FAQs and news. Manage that
 content from the **Help center content** card in **Settings** (create, edit, publish/draft or
-delete). Backend CORS is pre-configured for `http://localhost:3000`.
+delete). **Auto-open on page load** is on by default, so the chat panel appears as soon as the
+embedded widget loads; turn it off under **Settings → Messenger widget** if you prefer the
+launcher-only experience. Backend CORS is pre-configured for `http://localhost:3000`.
 
 **Billing** in the sidebar opens the standalone `/billing` page. It shows the trial status,
 monthly (₹399) and yearly (₹3,990) cards, the Razorpay checkout, and cancellation. When a

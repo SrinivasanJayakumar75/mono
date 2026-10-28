@@ -66,7 +66,7 @@ public class WidgetService {
     public WidgetConfigDto config(String appId) {
         List<WidgetConfigDto> rows = jdbc.query("""
                 select app_id, workspace_name, greeting, subtitle, color, intro_message,
-                       input_placeholder, show_branding
+                       input_placeholder, show_branding, auto_open
                 from widget_settings
                 where app_id = ?
                 """, (rs, i) -> new WidgetConfigDto(
@@ -77,7 +77,8 @@ public class WidgetService {
                 rs.getString("color"),
                 rs.getString("intro_message"),
                 rs.getString("input_placeholder"),
-                rs.getBoolean("show_branding")), appId);
+                rs.getBoolean("show_branding"),
+                rs.getBoolean("auto_open")), appId);
         if (rows.isEmpty()) {
             throw new NotFoundException("Unknown messenger app");
         }

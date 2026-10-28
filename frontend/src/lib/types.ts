@@ -125,6 +125,7 @@ export interface WidgetSettings {
   introMessage: string;
   inputPlaceholder: string;
   showBranding: boolean;
+  autoOpen: boolean;
   aiEnabled: boolean;
   autoReply: boolean;
 }
@@ -139,6 +140,7 @@ export type WidgetSettingsUpdate = Partial<
     | "introMessage"
     | "inputPlaceholder"
     | "showBranding"
+    | "autoOpen"
     | "aiEnabled"
     | "autoReply"
   >
@@ -316,6 +318,7 @@ export interface WidgetConfig {
   introMessage: string;
   inputPlaceholder: string;
   showBranding: boolean;
+  autoOpen: boolean;
 }
 
 export type WidgetContentKind = "BLOG" | "FAQ" | "ANNOUNCEMENT";

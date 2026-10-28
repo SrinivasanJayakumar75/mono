@@ -13,5 +13,6 @@ public record WidgetConfigDto(
         String color,
         String introMessage,
         String inputPlaceholder,
-        boolean showBranding) {
+        boolean showBranding,
+        boolean autoOpen) {
 }

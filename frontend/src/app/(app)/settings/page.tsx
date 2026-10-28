@@ -203,14 +203,17 @@ export default function SettingsPage() {
   const [widgetLoading, setWidgetLoading] = useState(true);
   const [widgetError, setWidgetError] = useState<string | null>(null);
   const [savingWidget, setSavingWidget] = useState(false);
+  const [autoOpenSupported, setAutoOpenSupported] = useState(true);
 
   const loadWidget = useCallback(async () => {
     setWidgetLoading(true);
     setWidgetError(null);
     try {
       const data = await apiFetch<WidgetSettings>("/widget-settings");
-      setWidget(data);
-      setWidgetDraft(data);
+      setAutoOpenSupported(typeof data.autoOpen === "boolean");
+      const normalized = { ...data, autoOpen: data.autoOpen ?? true };
+      setWidget(normalized);
+      setWidgetDraft(normalized);
     } catch (err) {
       setWidgetError(err instanceof Error ? err.message : "Could not load widget settings.");
     } finally {
@@ -239,6 +242,7 @@ export default function SettingsPage() {
         introMessage: widgetDraft.introMessage,
         inputPlaceholder: widgetDraft.inputPlaceholder,
         showBranding: widgetDraft.showBranding,
+        ...(autoOpenSupported ? { autoOpen: widgetDraft.autoOpen } : {}),
         aiEnabled: widgetDraft.aiEnabled,
         autoReply: widgetDraft.autoReply,
       };
@@ -246,8 +250,10 @@ export default function SettingsPage() {
         method: "PUT",
         json: payload,
       });
-      setWidget(updated);
-      setWidgetDraft(updated);
+      setAutoOpenSupported(typeof updated.autoOpen === "boolean");
+      const normalized = { ...updated, autoOpen: updated.autoOpen ?? true };
+      setWidget(normalized);
+      setWidgetDraft(normalized);
       toast("Widget settings saved", { tone: "success" });
     } catch (err) {
       toast("Could not save widget settings", {
@@ -724,6 +730,14 @@ export default function SettingsPage() {
                   label="Show branding"
                   description="Display the “Powered by Monotron” footer."
                 />
+                {autoOpenSupported ? (
+                  <ToggleSwitch
+                    checked={widgetDraft.autoOpen}
+                    onChange={(value) => updateDraft({ autoOpen: value })}
+                    label="Auto-open on page load"
+                    description="Open the chat panel automatically when a visitor lands on your site."
+                  />
+                ) : null}
                 <ToggleSwitch
                   checked={widgetDraft.aiEnabled}
                   onChange={(value) => updateDraft({ aiEnabled: value })}

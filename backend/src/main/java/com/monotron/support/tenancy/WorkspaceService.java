@@ -130,7 +130,7 @@ public class WorkspaceService {
         jdbc.update("""
                 update widget_settings
                 set workspace_name = ?, greeting = ?, subtitle = ?, color = ?, intro_message = ?,
-                    input_placeholder = ?, show_branding = ?, updated_at = now()
+                    input_placeholder = ?, show_branding = ?, auto_open = ?, updated_at = now()
                 where app_id = ?
                 """,
                 request.workspaceName() != null ? request.workspaceName() : current.workspaceName(),
@@ -140,6 +140,7 @@ public class WorkspaceService {
                 request.introMessage() != null ? request.introMessage() : current.introMessage(),
                 request.inputPlaceholder() != null ? request.inputPlaceholder() : current.inputPlaceholder(),
                 request.showBranding() != null ? request.showBranding() : current.showBranding(),
+                request.autoOpen() != null ? request.autoOpen() : current.autoOpen(),
                 appId);
 
         if (request.aiEnabled() != null || request.autoReply() != null) {
@@ -164,7 +165,7 @@ public class WorkspaceService {
         AppDto app = appService.requireCurrent();
         List<WidgetSettingsDto> rows = jdbc.query("""
                 select app_id, workspace_name, greeting, subtitle, color, intro_message,
-                       input_placeholder, show_branding
+                       input_placeholder, show_branding, auto_open
                 from widget_settings
                 where app_id = ?
                 """, (rs, i) -> new WidgetSettingsDto(
@@ -176,6 +177,7 @@ public class WorkspaceService {
                 rs.getString("intro_message"),
                 rs.getString("input_placeholder"),
                 rs.getBoolean("show_branding"),
+                rs.getBoolean("auto_open"),
                 app.aiEnabled(),
                 app.autoReply()), appId);
         if (rows.isEmpty()) {

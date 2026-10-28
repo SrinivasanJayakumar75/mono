@@ -27,6 +27,7 @@ public record UpdateWidgetSettingsRequest(
         String inputPlaceholder,
 
         Boolean showBranding,
+        Boolean autoOpen,
         Boolean aiEnabled,
         Boolean autoReply) {
 }
