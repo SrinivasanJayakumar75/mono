@@ -98,7 +98,7 @@ Useful configuration (all optional, see `backend/src/main/resources/application.
 | `MONOTRON_AI_PROVIDER` | `auto` (`openai` to force the remote provider) |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | empty / `https://api.openai.com/v1` |
 | `GOOGLE_CLIENT_ID` | empty (Google buttons hidden until set) |
-| `MONOTRON_STORAGE_DIR` | `./data/uploads` |
+| `MONOTRON_STORAGE_DIR` | `./data/uploads` (must be writable; use a persistent volume in production) |
 | `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | empty (checkout disabled until both are set) |
 | `RAZORPAY_WEBHOOK_SECRET` | empty (webhook disabled until set) |
 | `RAZORPAY_MONTHLY_AMOUNT` / `RAZORPAY_YEARLY_AMOUNT` | `39900` / `399000` paise (₹399 / ₹3,990) |

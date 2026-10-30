@@ -14,7 +14,6 @@ import com.monotron.support.common.ForbiddenException;
 import com.monotron.support.common.Ids;
 import com.monotron.support.common.NotFoundException;
 import com.monotron.support.common.PageResponse;
-import com.monotron.support.config.AppProperties;
 import com.monotron.support.knowledge.dto.ChunkDto;
 import com.monotron.support.knowledge.dto.DocumentDetailDto;
 import com.monotron.support.knowledge.dto.DocumentDto;
@@ -44,12 +43,12 @@ public class DocumentService {
 
     private final JdbcTemplate jdbc;
     private final DocumentIngestionService ingestion;
-    private final AppProperties properties;
+    private final StorageService storage;
 
-    public DocumentService(JdbcTemplate jdbc, DocumentIngestionService ingestion, AppProperties properties) {
+    public DocumentService(JdbcTemplate jdbc, DocumentIngestionService ingestion, StorageService storage) {
         this.jdbc = jdbc;
         this.ingestion = ingestion;
-        this.properties = properties;
+        this.storage = storage;
     }
 
     // ------------------------------------------------------------------
@@ -269,7 +268,7 @@ public class DocumentService {
     }
 
     private String storagePath(String workspaceId, String documentId) {
-        return Path.of(properties.getStorage().getDirectory(), workspaceId, documentId + ".pdf").toString();
+        return storage.pathFor(workspaceId, documentId);
     }
 
     private static String stripExtension(String filename) {
