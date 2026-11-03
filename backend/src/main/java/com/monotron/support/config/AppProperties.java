@@ -278,23 +278,25 @@ public class AppProperties {
     }
 
     /**
-     * Razorpay subscription billing. Prices are stored in the smallest currency
-     * unit (paise for INR) because that is what Razorpay's API expects.
+     * Polar subscription billing. Prices are stored in the smallest currency
+     * unit (paise for INR), matching Polar's API and the product prices created
+     * in the Polar dashboard.
      */
     public static class Billing {
         private boolean enforce = true;
-        private String provider = "razorpay";
-        private String keyId = "";
-        private String keySecret = "";
+        private String provider = "polar";
+        private String accessToken = "";
         private String webhookSecret = "";
-        private String apiBaseUrl = "https://api.razorpay.com/v1";
+        private String apiBaseUrl = "https://api.polar.sh/v1";
+        private String monthlyProductId = "";
+        private String yearlyProductId = "";
+        private String successUrl = "http://localhost:3000/billing";
         private String currency = "INR";
         private int monthlyAmount = 39900;
         private int yearlyAmount = 399000;
         private int trialDays = 3;
-        private int monthlyCycles = 100;
-        private int yearlyCycles = 10;
         private Duration timeout = Duration.ofSeconds(30);
+        private boolean testMode = false;
 
         public boolean isEnforce() {
             return enforce;
@@ -312,20 +314,12 @@ public class AppProperties {
             this.provider = provider;
         }
 
-        public String getKeyId() {
-            return keyId;
+        public String getAccessToken() {
+            return accessToken;
         }
 
-        public void setKeyId(String keyId) {
-            this.keyId = keyId;
-        }
-
-        public String getKeySecret() {
-            return keySecret;
-        }
-
-        public void setKeySecret(String keySecret) {
-            this.keySecret = keySecret;
+        public void setAccessToken(String accessToken) {
+            this.accessToken = accessToken;
         }
 
         public String getWebhookSecret() {
@@ -342,6 +336,30 @@ public class AppProperties {
 
         public void setApiBaseUrl(String apiBaseUrl) {
             this.apiBaseUrl = apiBaseUrl;
+        }
+
+        public String getMonthlyProductId() {
+            return monthlyProductId;
+        }
+
+        public void setMonthlyProductId(String monthlyProductId) {
+            this.monthlyProductId = monthlyProductId;
+        }
+
+        public String getYearlyProductId() {
+            return yearlyProductId;
+        }
+
+        public void setYearlyProductId(String yearlyProductId) {
+            this.yearlyProductId = yearlyProductId;
+        }
+
+        public String getSuccessUrl() {
+            return successUrl;
+        }
+
+        public void setSuccessUrl(String successUrl) {
+            this.successUrl = successUrl;
         }
 
         public String getCurrency() {
@@ -376,28 +394,20 @@ public class AppProperties {
             this.trialDays = trialDays;
         }
 
-        public int getMonthlyCycles() {
-            return monthlyCycles;
-        }
-
-        public void setMonthlyCycles(int monthlyCycles) {
-            this.monthlyCycles = monthlyCycles;
-        }
-
-        public int getYearlyCycles() {
-            return yearlyCycles;
-        }
-
-        public void setYearlyCycles(int yearlyCycles) {
-            this.yearlyCycles = yearlyCycles;
-        }
-
         public Duration getTimeout() {
             return timeout;
         }
 
         public void setTimeout(Duration timeout) {
             this.timeout = timeout;
+        }
+
+        public boolean isTestMode() {
+            return testMode;
+        }
+
+        public void setTestMode(boolean testMode) {
+            this.testMode = testMode;
         }
     }
 }

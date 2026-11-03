@@ -5,7 +5,7 @@ import java.util.Map;
 import com.monotron.support.billing.dto.BillingSummaryDto;
 import com.monotron.support.billing.dto.CheckoutRequest;
 import com.monotron.support.billing.dto.CheckoutResponse;
-import com.monotron.support.billing.dto.VerifyPaymentRequest;
+import com.monotron.support.billing.dto.VerifyCheckoutRequest;
 import com.monotron.support.security.AuthPrincipal;
 import jakarta.validation.Valid;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -17,7 +17,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 /**
- * Razorpay subscription endpoints. The webhook is the only public route; all
+ * Polar subscription endpoints. The webhook is the only public route; all
  * other routes require a workspace admin.
  */
 @RestController
@@ -43,7 +43,7 @@ public class BillingController {
 
     @PostMapping("/verify")
     public BillingSummaryDto verify(@AuthenticationPrincipal AuthPrincipal principal,
-            @Valid @RequestBody VerifyPaymentRequest request) {
+            @Valid @RequestBody VerifyCheckoutRequest request) {
         return billingService.verify(principal, request);
     }
 
@@ -54,10 +54,11 @@ public class BillingController {
 
     @PostMapping("/webhook")
     public Map<String, String> webhook(
-            @RequestHeader(value = "X-Razorpay-Signature", required = false) String signature,
-            @RequestHeader(value = "X-Razorpay-Event-Id", required = false) String eventId,
+            @RequestHeader(value = "webhook-id", required = false) String eventId,
+            @RequestHeader(value = "webhook-timestamp", required = false) String timestamp,
+            @RequestHeader(value = "webhook-signature", required = false) String signature,
             @RequestBody String body) {
-        billingService.handleWebhook(body, signature, eventId);
+        billingService.handleWebhook(body, eventId, timestamp, signature);
         return Map.of("status", "ok");
     }
 }

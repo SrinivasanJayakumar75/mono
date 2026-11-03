@@ -76,21 +76,25 @@ monotron:
       top-k: 6
       min-score: 0.15
   billing:
-    # Set BILLING_ENFORCE=false only for local development without Razorpay keys.
+    # Set BILLING_ENFORCE=false only for local development without Polar keys.
     enforce: ${BILLING_ENFORCE:true}
-    provider: ${RAZORPAY_PROVIDER:razorpay}
-    key-id: ${RAZORPAY_KEY_ID:}
-    key-secret: ${RAZORPAY_KEY_SECRET:}
-    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
-    api-base-url: ${RAZORPAY_API_BASE_URL:https://api.razorpay.com/v1}
-    currency: ${RAZORPAY_CURRENCY:INR}
+    provider: ${POLAR_PROVIDER:polar}
+    access-token: ${POLAR_ACCESS_TOKEN:}
+    webhook-secret: ${POLAR_WEBHOOK_SECRET:}
+    api-base-url: ${POLAR_API_BASE_URL:https://api.polar.sh/v1}
+    monthly-product-id: ${POLAR_MONTHLY_PRODUCT_ID:}
+    yearly-product-id: ${POLAR_YEARLY_PRODUCT_ID:}
+    # Polar redirects here after a successful checkout. The backend appends
+    # ?checkout=success&checkout_id={CHECKOUT_ID}.
+    success-url: ${POLAR_SUCCESS_URL:http://localhost:3000/billing}
+    currency: ${POLAR_CURRENCY:INR}
     # Amounts are in paise: 39900 = ₹399, 399000 = ₹3,990.
-    monthly-amount: ${RAZORPAY_MONTHLY_AMOUNT:39900}
-    yearly-amount: ${RAZORPAY_YEARLY_AMOUNT:399000}
+    monthly-amount: ${POLAR_MONTHLY_AMOUNT:39900}
+    yearly-amount: ${POLAR_YEARLY_AMOUNT:399000}
     trial-days: ${MONOTRON_TRIAL_DAYS:3}
-    monthly-cycles: ${RAZORPAY_MONTHLY_CYCLES:100}
-    yearly-cycles: ${RAZORPAY_YEARLY_CYCLES:10}
-    timeout: ${RAZORPAY_TIMEOUT:30s}
+    timeout: ${POLAR_TIMEOUT:30s}
+    # Set true when POLAR_API_BASE_URL points at sandbox-api.polar.sh.
+    test-mode: ${POLAR_TEST_MODE:false}
 
 management:
   endpoints:

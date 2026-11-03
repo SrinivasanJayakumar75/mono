@@ -7,7 +7,7 @@ embed a public messenger widget on its own site — including an Intercom-style 
 blogs, FAQs and news announcements — and run its sales pipeline in a built-in CRM (leads,
 deals, companies, contacts, tasks, calls, meetings, products, orders, documents).
 Every workspace starts with a 3-day free trial, then subscribes monthly (₹399) or yearly
-(₹3,990) through Razorpay.
+(₹3,990) through Polar.
 
 ```
 backend/    Spring Boot 3.5 (Java 21) API, JWT auth, PDF ingestion, pgvector RAG, CRM, billing
@@ -28,7 +28,7 @@ db/         database helpers (the live schema is managed by Flyway in the backen
 | AI | Provider `auto`: uses any OpenAI-compatible endpoint when `OPENAI_API_KEY` is set, otherwise bundled local providers (deterministic hashed embeddings + a grounded extractive answer composer) so the whole stack runs offline. Retrieval is cosine similarity via `1 - (embedding <=> ?::vector)`. |
 | Human handoff | Agents can **Escalate** a conversation from the inbox. While escalated the widget still records visitor messages but skips automatic AI replies, so the assistant and a live agent never answer over each other. Escalating also claims an unassigned thread; **Resume AI** hands it back. |
 | CRM | Ten resources (leads, deals, companies, contacts, tasks, calls, meetings, products, orders, documents) share one whitelisted descriptor registry, so the REST surface is `GET/POST/PATCH/DELETE /api/crm/{resource}[/{id}]` rather than ten hand-written controllers. Orders own line items and expose computed `itemCount` / `totalAmount`; the `/crm` page includes an overview plus per-module tables and forms. CRM contacts are a separate table from the widget visitor directory at `/contacts`. An inbox conversation can promote its visitor into a lead with **Add to CRM**; the action is idempotent and the thread shows **In CRM** once linked. |
-| Billing | New workspaces get a 3-day trial. When it expires, a server-side MVC interceptor returns `402 Payment Required` for workspace APIs while auth, billing and the public widget stay reachable, so the user can pay. Razorpay Subscriptions handles monthly (₹399) and yearly (₹3,990) plans; checkout signatures and webhooks are verified on the server. Billing tables are global (no RLS) because webhooks arrive without a tenant, and every workspace-facing query filters by `workspace_id`. |
+| Billing | New workspaces get a 3-day trial. When it expires, a server-side MVC interceptor returns `402 Payment Required` for workspace APIs while auth, billing and the public widget stay reachable, so the user can pay. Polar Subscriptions handles monthly (₹399) and yearly (₹3,990) plans; checkout redirects and webhooks are verified on the server. Billing tables are global (no RLS) because webhooks arrive without a tenant, and every workspace-facing query filters by `workspace_id`. |
 | Frontend | Typed API client that mirrors `docs/API.md`, tokens in `localStorage` (`monotron.access`, `monotron.refresh`), transparent single retry after a 401 refresh. A global `402` handler moves an expired workspace to the standalone `/billing` page. |
 
 ## Prerequisites
@@ -43,10 +43,11 @@ exists in the target database), `V2` adds the AI columns, `V3` creates the restr
 runtime role and grants it DML on the application tables, `V4` adds the
 conversation escalation flag, `V5` removes the retired billing tables, `V8` adds the
 dedicated CRM contact and document tables (tenant-scoped by the same RLS policy and insert
-trigger as the other CRM entities), `V9` adds the Razorpay subscription schema plus a
+trigger as the other CRM entities), `V9` adds the subscription schema plus a
 3-day trial backfill for existing workspaces, `V10` links leads back to the inbox contact
-they were created from, `V11` renames the restricted runtime role to `monotron_app`, and
-`V12` adds tenant-scoped widget help-center content.
+they were created from, `V11` renames the restricted runtime role to `monotron_app`,
+`V12` adds tenant-scoped widget help-center content, `V13` adds the widget auto-open flag,
+and `V14` switches new billing rows to Polar.
 
 Applied migrations are immutable: V1-V10 keep their original historical comments and role
 name so Flyway checksums stay valid. `V11` is the compatibility bridge for both fresh and
@@ -99,9 +100,12 @@ Useful configuration (all optional, see `backend/src/main/resources/application.
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | empty / `https://api.openai.com/v1` |
 | `GOOGLE_CLIENT_ID` | empty (Google buttons hidden until set) |
 | `MONOTRON_STORAGE_DIR` | `./data/uploads` (must be writable; use a persistent volume in production) |
-| `RAZORPAY_KEY_ID` / `RAZORPAY_KEY_SECRET` | empty (checkout disabled until both are set) |
-| `RAZORPAY_WEBHOOK_SECRET` | empty (webhook disabled until set) |
-| `RAZORPAY_MONTHLY_AMOUNT` / `RAZORPAY_YEARLY_AMOUNT` | `39900` / `399000` paise (₹399 / ₹3,990) |
+| `POLAR_ACCESS_TOKEN` | empty (checkout disabled until set) |
+| `POLAR_MONTHLY_PRODUCT_ID` / `POLAR_YEARLY_PRODUCT_ID` | empty (checkout disabled until both are set) |
+| `POLAR_WEBHOOK_SECRET` | empty (webhook disabled until set) |
+| `POLAR_API_BASE_URL` | `https://api.polar.sh/v1` (use `https://sandbox-api.polar.sh/v1` for sandbox) |
+| `POLAR_SUCCESS_URL` | `http://localhost:3000/billing` |
+| `POLAR_MONTHLY_AMOUNT` / `POLAR_YEARLY_AMOUNT` | `39900` / `399000` paise (₹399 / ₹3,990) |
 | `MONOTRON_TRIAL_DAYS` | `3` |
 | `BILLING_ENFORCE` | `true` (set `false` only for local development) |
 
@@ -151,35 +155,43 @@ creates a workspace with the defaults if the verified email is new. Accounts cre
 password can also use Google later because accounts are matched by verified email. If the
 variable is empty the Google button is hidden and email/password auth is unchanged.
 
-#### Razorpay subscriptions
+#### Polar subscriptions
 
-Monotron uses [Razorpay Subscriptions](https://razorpay.com/docs/payments/subscriptions/)
-for recurring billing. The browser only receives the public key id; the key secret and webhook
-secret stay on the server.
+Monotron uses [Polar](https://polar.sh/docs) for recurring billing. The browser is redirected
+to Polar's hosted checkout; the organization access token and webhook secret stay on the server.
 
-1. Create a Razorpay account, switch to **Test mode**, and generate API keys.
-2. Put the keys and a webhook secret in `backend/.env`:
+1. Create a Polar account and two recurring products with **INR** prices: monthly ₹399 and
+   yearly ₹3,990. Copy both product IDs from **Products** in the dashboard.
+2. Create an organization access token with `checkouts:read`, `checkouts:write`,
+   `subscriptions:read` and `subscriptions:write`. Create a webhook secret as well.
+3. Put the values in `backend/.env`:
 
    ```dotenv
-   RAZORPAY_KEY_ID=rzp_test_...
-   RAZORPAY_KEY_SECRET=...
-   RAZORPAY_WEBHOOK_SECRET=choose-a-long-random-string
+   POLAR_ACCESS_TOKEN=polar_oat_...
+   POLAR_MONTHLY_PRODUCT_ID=...
+   POLAR_YEARLY_PRODUCT_ID=...
+   POLAR_WEBHOOK_SECRET=whsec_...
+   # Use the sandbox API while testing:
+   # POLAR_API_BASE_URL=https://sandbox-api.polar.sh/v1
+   # POLAR_TEST_MODE=true
    ```
 
-3. In the Razorpay dashboard, add a webhook pointing at
-   `https://<your-public-backend>/api/billing/webhook` and subscribe to the subscription and
-   payment events (`subscription.authenticated`, `subscription.activated`,
-   `subscription.charged`, `subscription.cancelled`, `subscription.completed`,
-   `subscription.expired`, `subscription.halted`, `subscription.pending`, `payment.captured`
-   and `payment.failed`). For local development, expose the backend with a tunnel such as
-   ngrok.
-4. Restart the backend. The first checkout creates and caches the selected monthly or yearly
-   Razorpay plan in `billing_plans`; later checkouts reuse it.
+4. In the Polar dashboard, add a webhook pointing at
+   `https://<your-public-backend>/api/billing/webhook` and subscribe to
+   `subscription.created`, `subscription.active`, `subscription.updated`,
+   `subscription.canceled`, `subscription.revoked`, `subscription.past_due`,
+   `subscription.paused`, `subscription.resumed`, `subscription.cycled`, `order.paid`
+   and `order.refunded`.
+   For local development, expose the backend with a tunnel such as ngrok.
+5. Restart the backend. Checkout creates a Polar checkout session and redirects the browser to
+   it. After payment, Polar returns to `POLAR_SUCCESS_URL` with a checkout id; the billing page
+   verifies it and the signed webhook keeps the subscription in sync.
 
-Until all three values are present, the `/billing` page shows a setup notice; checkout returns
-`503` until the API keys are present. The webhook is public but signature-verified and
-idempotent by event id. Existing workspaces received a fresh 3-day trial in `V9`; new
-workspaces get one at registration. To work offline without a paywall, set
+Until the access token and both product IDs are present, the `/billing` page shows a setup
+notice and checkout returns `503`. The webhook is public but signature-verified with Standard
+Webhooks headers and idempotent by event id. New workspaces get a 3-day trial at registration.
+Existing Razorpay subscriptions are not migrated automatically; cancel them in the Razorpay
+dashboard before moving a workspace to Polar. To work offline without a paywall, set
 `BILLING_ENFORCE=false` (never in production).
 
 ### 3. Frontend
@@ -222,9 +234,9 @@ embedded widget loads; turn it off under **Settings → Messenger widget** if yo
 launcher-only experience. Backend CORS is pre-configured for `http://localhost:3000`.
 
 **Billing** in the sidebar opens the standalone `/billing` page. It shows the trial status,
-monthly (₹399) and yearly (₹3,990) cards, the Razorpay checkout, and cancellation. When a
+monthly (₹399) and yearly (₹3,990) cards, the Polar checkout, and cancellation. When a
 trial expires, protected pages redirect there and the API returns `402` until a subscription
-is active. The page also shows the exact setup steps when the Razorpay keys are missing.
+is active. The page also shows the exact setup steps when the Polar values are missing.
 
 ## Tests
 
@@ -293,7 +305,7 @@ The subscription paywall has its own script too:
 It registers a throwaway tenant, checks the 3-day trial and the ₹399 / ₹3,990 plans, expires
 the trial through the local Docker database, proves protected APIs (including widget settings)
 return `402` while auth, billing and the public widget stay reachable, and restores the trial in
-a `finally` block. It does not create a live Razorpay subscription, so it is safe to run without
+a `finally` block. It does not create a live Polar subscription, so it is safe to run without
 keys. Use `-DbContainer`, `-DbUser` and `-DbName` if your PostgreSQL instance is not the standard
 `monotron-db` container.
 

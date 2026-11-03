@@ -479,7 +479,7 @@ export default function LandingPage() {
                   "AI answers with citations",
                   "Shared inbox and live widget",
                   "CRM and contacts",
-                  "Razorpay checkout",
+                  "Polar checkout",
                 ]}
               />
               <PricingCard
