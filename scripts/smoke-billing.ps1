@@ -182,7 +182,8 @@ Check 'the workspace admin can manage billing' {
     Assert-True ($script:billing.canManage -eq $true) 'canManage was false'
 }
 
-Check 'Razorpay configuration status is reported' {
+Check 'Polar configuration status is reported' {
+    Assert-True ($script:billing.provider -eq 'polar') "provider was $($script:billing.provider)"
     Assert-True ($null -ne $script:billing.PSObject.Properties['configured']) 'configured is missing'
     Assert-True ($null -ne $script:billing.PSObject.Properties['webhookConfigured']) 'webhookConfigured is missing'
 }
@@ -193,12 +194,12 @@ Check 'the trial can use a protected API' {
 }
 
 if ($script:billing.configured -eq $false) {
-    Check 'unconfigured Razorpay returns a clear setup error' {
+    Check 'unconfigured Polar returns a clear setup error' {
         $result = Invoke-ApiResult -Method Post -Path '/billing/checkout' -Headers $auth -Body @{
             interval = 'MONTHLY'
         }
         Assert-True ($result.Status -eq 503) "expected 503, got $($result.Status)"
-        Assert-True ($result.Body.message -match 'Razorpay is not configured') 'setup message was missing'
+        Assert-True ($result.Body.message -match 'Polar is not configured') 'setup message was missing'
     }
 } else {
     Write-Host '  SKIP  live checkout is configured; smoke test does not create a real subscription' -ForegroundColor Yellow

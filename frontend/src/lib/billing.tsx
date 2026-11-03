@@ -53,22 +53,15 @@ export interface BillingSummary {
 }
 
 export interface CheckoutSession {
-  subscriptionId: string;
-  keyId: string;
-  shortUrl: string | null;
-  name: string;
-  description: string;
-  prefillName: string;
-  prefillEmail: string;
+  checkoutId: string;
+  url: string;
   interval: BillingInterval;
   amount: number;
   currency: string;
 }
 
-export interface VerifyPaymentPayload {
-  razorpay_payment_id: string;
-  razorpay_subscription_id: string;
-  razorpay_signature: string;
+export interface VerifyCheckoutPayload {
+  checkout_id: string;
 }
 
 interface BillingContextValue {

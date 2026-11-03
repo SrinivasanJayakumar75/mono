@@ -2,7 +2,7 @@
 
 import clsx from "clsx";
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import {
   AlertIcon,
@@ -33,58 +33,6 @@ import {
 import { formatDate, formatMoney } from "@/lib/format";
 
 type BadgeVariant = "neutral" | "brand" | "success" | "warning" | "danger" | "info";
-
-interface RazorpayResponse {
-  razorpay_payment_id: string;
-  razorpay_subscription_id: string;
-  razorpay_signature: string;
-}
-
-interface RazorpayOptions {
-  key: string;
-  subscription_id: string;
-  name: string;
-  description?: string;
-  prefill?: { name?: string; email?: string };
-  notes?: Record<string, string>;
-  theme?: { color?: string };
-  handler: (response: RazorpayResponse) => void;
-  modal?: { ondismiss?: () => void };
-}
-
-interface RazorpayInstance {
-  open: () => void;
-  on: (event: string, handler: (...args: unknown[]) => void) => void;
-}
-
-declare global {
-  interface Window {
-    Razorpay?: new (options: RazorpayOptions) => RazorpayInstance;
-  }
-}
-
-let razorpayScript: Promise<void> | null = null;
-
-function loadRazorpayScript(): Promise<void> {
-  if (typeof window === "undefined") {
-    return Promise.reject(new Error("Razorpay Checkout is only available in the browser."));
-  }
-  if (window.Razorpay) return Promise.resolve();
-  if (razorpayScript) return razorpayScript;
-
-  razorpayScript = new Promise((resolve, reject) => {
-    const script = document.createElement("script");
-    script.src = "https://checkout.razorpay.com/v1/checkout.js";
-    script.async = true;
-    script.onload = () => resolve();
-    script.onerror = () => {
-      razorpayScript = null;
-      reject(new Error("Could not load Razorpay Checkout. Check your connection and try again."));
-    };
-    document.body.appendChild(script);
-  });
-  return razorpayScript;
-}
 
 function statusMeta(billing: BillingSummary): {
   variant: BadgeVariant;
@@ -124,7 +72,7 @@ function statusMeta(billing: BillingSummary): {
             ? `Your trial still has ${billing.daysLeft} ${
                 billing.daysLeft === 1 ? "day" : "days"
               } left while you complete payment.`
-            : "Complete your Razorpay checkout to activate the workspace.",
+            : "Complete your Polar checkout to activate the workspace.",
       };
     case "CANCELLED":
       return {
@@ -176,6 +124,7 @@ export default function BillingPage() {
   const [cancelOpen, setCancelOpen] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
+  const verifiedCheckout = useRef<string | null>(null);
 
   useEffect(() => {
     if (status === "unauthenticated") {
@@ -183,44 +132,60 @@ export default function BillingPage() {
     }
   }, [status, router]);
 
+  useEffect(() => {
+    function onPageShow(event: PageTransitionEvent) {
+      // Returning from Polar through the back/forward cache must not leave the
+      // plan buttons stuck in the "opening checkout" state.
+      if (event.persisted) {
+        setCheckingOut(null);
+      }
+    }
+    window.addEventListener("pageshow", onPageShow);
+    return () => window.removeEventListener("pageshow", onPageShow);
+  }, []);
+
+  useEffect(() => {
+    if (status !== "authenticated" || !billing) return;
+    const params = new URLSearchParams(window.location.search);
+    const checkoutId = params.get("checkout_id");
+    if (params.get("checkout") !== "success" || !checkoutId) return;
+    if (verifiedCheckout.current === checkoutId) return;
+    verifiedCheckout.current = checkoutId;
+    setVerifying(true);
+    setLocalError(null);
+    void (async () => {
+      try {
+        const updated = await apiFetch<BillingSummary>("/billing/verify", {
+          method: "POST",
+          json: { checkout_id: checkoutId },
+        });
+        await refresh();
+        window.history.replaceState({}, "", "/billing");
+        toast("Subscription active", {
+          tone: "success",
+          description: "Your workspace is ready to use.",
+        });
+        if (updated.access) {
+          router.replace("/inbox");
+        }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Could not verify the payment.";
+        setLocalError(message);
+        toast(message, { tone: "error" });
+      } finally {
+        setVerifying(false);
+      }
+    })();
+  }, [status, billing, refresh, router, toast]);
+
   async function onLogout() {
     await logout();
     router.replace("/login");
   }
 
-  async function completePayment(response: RazorpayResponse) {
-    setVerifying(true);
-    setLocalError(null);
-    try {
-      const updated = await apiFetch<BillingSummary>("/billing/verify", {
-        method: "POST",
-        json: {
-          razorpay_payment_id: response.razorpay_payment_id,
-          razorpay_subscription_id: response.razorpay_subscription_id,
-          razorpay_signature: response.razorpay_signature,
-        },
-      });
-      await refresh();
-      toast("Subscription active", {
-        tone: "success",
-        description: "Your workspace is ready to use.",
-      });
-      if (updated.access) {
-        router.replace("/inbox");
-      }
-    } catch (err) {
-      const message = err instanceof Error ? err.message : "Could not verify the payment.";
-      setLocalError(message);
-      toast(message, { tone: "error" });
-    } finally {
-      setVerifying(false);
-      setCheckingOut(null);
-    }
-  }
-
   async function startCheckout(interval: BillingInterval) {
     if (!billing?.configured) {
-      toast("Razorpay is not configured yet.", { tone: "error" });
+      toast("Polar is not configured yet.", { tone: "error" });
       return;
     }
     setCheckingOut(interval);
@@ -230,34 +195,7 @@ export default function BillingPage() {
         method: "POST",
         json: { interval },
       });
-      await loadRazorpayScript();
-      if (!window.Razorpay) {
-        throw new Error("Razorpay Checkout did not load.");
-      }
-
-      const checkout = new window.Razorpay({
-        key: session.keyId,
-        subscription_id: session.subscriptionId,
-        name: session.name,
-        description: session.description,
-        prefill: { name: session.prefillName, email: session.prefillEmail },
-        notes: { workspace_id: billing.workspaceId },
-        theme: { color: "#1e1b4b" },
-        handler: (response) => {
-          void completePayment(response);
-        },
-        modal: {
-          ondismiss: () => {
-            setCheckingOut(null);
-            toast("Checkout closed", { tone: "info" });
-          },
-        },
-      });
-      checkout.on("payment.failed", () => {
-        setCheckingOut(null);
-        toast("Payment failed. Please try again.", { tone: "error" });
-      });
-      checkout.open();
+      window.location.assign(session.url);
     } catch (err) {
       setCheckingOut(null);
       const message = err instanceof Error ? err.message : "Could not start checkout.";
@@ -364,7 +302,7 @@ export default function BillingPage() {
             <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-brand-700">
               Billing
             </p>
-            {billing.testMode ? <Badge variant="warning">Razorpay test mode</Badge> : null}
+            {billing.testMode ? <Badge variant="warning">Polar test mode</Badge> : null}
           </div>
           <h1 className="mt-2 text-3xl font-semibold tracking-[-0.04em] text-surface-900 sm:text-4xl">
             Simple plans for {workspace?.name ?? "your workspace"}
@@ -493,7 +431,7 @@ export default function BillingPage() {
         ) : null}
 
         <p className="mt-8 text-center text-[11.5px] leading-5 text-surface-500">
-          Payments are processed securely by Razorpay. Prices are in {currency}. Cancel at the end
+          Payments are processed securely by Polar. Prices are in {currency}. Cancel at the end
           of your billing period; access continues until then.
         </p>
 
@@ -642,7 +580,7 @@ function PlanCard({
         <PlanFeature>Full access to Inbox, CRM, Knowledge and Contacts</PlanFeature>
         <PlanFeature>AI replies and the messenger widget</PlanFeature>
         <PlanFeature>Unlimited teammates</PlanFeature>
-        <PlanFeature>Secure recurring billing by Razorpay</PlanFeature>
+        <PlanFeature>Secure recurring billing by Polar</PlanFeature>
       </ul>
 
       <Button

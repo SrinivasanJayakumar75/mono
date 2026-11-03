@@ -7,9 +7,9 @@ import java.sql.Timestamp;
 import java.sql.Types;
 import java.time.Duration;
 import java.time.Instant;
+import java.time.OffsetDateTime;
 import java.time.ZoneOffset;
 import java.time.ZonedDateTime;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -18,11 +18,10 @@ import java.util.Set;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.monotron.support.billing.dto.BillingPlanDto;
 import com.monotron.support.billing.dto.BillingSummaryDto;
 import com.monotron.support.billing.dto.CheckoutResponse;
-import com.monotron.support.billing.dto.VerifyPaymentRequest;
+import com.monotron.support.billing.dto.VerifyCheckoutRequest;
 import com.monotron.support.common.ApiException;
 import com.monotron.support.common.BadRequestException;
 import com.monotron.support.common.ConflictException;
@@ -39,7 +38,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Subscription lifecycle for Razorpay: local trial, checkout, verification,
+ * Subscription lifecycle for Polar: local trial, checkout, verification,
  * cancellation, and webhook reconciliation.
  *
  * <p>Billing rows are intentionally global so webhooks can find a workspace
@@ -52,7 +51,7 @@ public class BillingService {
     private static final Logger log = LoggerFactory.getLogger(BillingService.class);
 
     private static final String SELECT_COLUMNS = """
-            select id, workspace_id, status, billing_interval, provider_plan_id,
+            select id, workspace_id, provider, status, billing_interval, provider_plan_id,
                    provider_subscription_id, current_start, current_end, trial_ends_at,
                    cancel_at_period_end, short_url
             from billing_subscriptions
@@ -60,14 +59,14 @@ public class BillingService {
 
     private final JdbcTemplate jdbc;
     private final ObjectMapper mapper;
-    private final RazorpayClient razorpay;
+    private final PolarClient polar;
     private final AppProperties.Billing properties;
 
-    public BillingService(JdbcTemplate jdbc, ObjectMapper mapper, RazorpayClient razorpay,
+    public BillingService(JdbcTemplate jdbc, ObjectMapper mapper, PolarClient polar,
             AppProperties appProperties) {
         this.jdbc = jdbc;
         this.mapper = mapper;
-        this.razorpay = razorpay;
+        this.polar = polar;
         this.properties = appProperties.getBilling();
     }
 
@@ -102,114 +101,106 @@ public class BillingService {
         String workspaceId = requireWorkspace(principal);
         requireAdmin(principal);
         String interval = normaliseInterval(requestedInterval);
-        if (!razorpay.configured()) {
+        if (!polar.configured()) {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Razorpay is not configured yet. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env.");
+                    "Polar is not configured yet. Add POLAR_ACCESS_TOKEN, "
+                            + "POLAR_MONTHLY_PRODUCT_ID and POLAR_YEARLY_PRODUCT_ID to backend/.env.");
+        }
+        if (!polar.configuredFor(interval)) {
+            throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
+                    "Polar " + label(interval).toLowerCase() + " product is not configured yet. Add "
+                            + envName(interval) + " to backend/.env.");
         }
 
         BillingRow row = ensureRow(workspaceId);
         Instant now = Instant.now();
         if (Set.of("ACTIVE", "PAST_DUE", "CANCELLED").contains(effectiveStatus(row, now))
                 && hasAccess(row, now)) {
+            if (!"polar".equals(row.provider())) {
+                throw new ConflictException(
+                        "This workspace has an active Razorpay subscription. Cancel it in the "
+                                + "Razorpay dashboard before subscribing with Polar.");
+            }
             throw new ConflictException("A subscription is already active for this workspace");
         }
 
         int amount = amountFor(interval);
         String currency = properties.getCurrency();
-        String planId = ensurePlan(interval, amount, currency);
-        int cycles = "YEARLY".equals(interval) ? properties.getYearlyCycles() : properties.getMonthlyCycles();
-
-        Map<String, String> notes = new LinkedHashMap<>();
-        notes.put("workspace_id", workspaceId);
-        notes.put("user_id", principal.userId());
-        notes.put("plan", interval);
-        Map<String, Object> subscription = razorpay.createSubscription(
-                planId, cycles, principal.email(), notes);
-        String subscriptionId = text(subscription.get("id"));
-        String shortUrl = text(subscription.get("short_url"));
-        if (subscriptionId == null) {
+        String productId = polar.productId(interval);
+        Map<String, Object> checkout = polar.createCheckout(
+                interval, principal.email(), workspaceId, principal.userId());
+        String checkoutId = text(checkout.get("id"));
+        String url = text(checkout.get("url"));
+        if (checkoutId == null || url == null) {
             throw new ApiException(HttpStatus.BAD_GATEWAY,
-                    "Razorpay did not return a subscription id. Please try again.");
+                    "Polar did not return a checkout URL. Please try again.");
         }
 
         jdbc.update("""
                 update billing_subscriptions
-                set status = 'PENDING', billing_interval = ?, provider_plan_id = ?,
-                    provider_subscription_id = ?, short_url = ?, cancel_at_period_end = false,
-                    updated_at = now()
+                set provider = 'polar', status = 'PENDING', billing_interval = ?,
+                    provider_plan_id = ?, provider_subscription_id = null, short_url = ?,
+                    cancel_at_period_end = false, updated_at = now()
                 where workspace_id = ?
-                """, interval, planId, subscriptionId, shortUrl, workspaceId);
+                """, interval, productId, url, workspaceId);
 
-        return new CheckoutResponse(
-                subscriptionId,
-                properties.getKeyId(),
-                shortUrl,
-                "Monotron",
-                "Monotron " + label(interval) + " subscription",
-                principal.name(),
-                principal.email(),
-                interval,
-                amount,
-                currency);
+        return new CheckoutResponse(checkoutId, url, interval, amount, currency);
     }
 
     @Transactional
-    public BillingSummaryDto verify(AuthPrincipal principal, VerifyPaymentRequest request) {
+    public BillingSummaryDto verify(AuthPrincipal principal, VerifyCheckoutRequest request) {
         String workspaceId = requireWorkspace(principal);
         requireAdmin(principal);
-        if (!razorpay.configured()) {
+        if (!polar.configured()) {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Razorpay is not configured yet. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env.");
+                    "Polar is not configured yet. Add POLAR_ACCESS_TOKEN, "
+                            + "POLAR_MONTHLY_PRODUCT_ID and POLAR_YEARLY_PRODUCT_ID to backend/.env.");
         }
 
-        String expected = BillingCrypto.hmacSha256Hex(
-                request.razorpayPaymentId() + "|" + request.razorpaySubscriptionId(),
-                properties.getKeySecret());
-        if (!BillingCrypto.constantTimeEquals(expected, request.razorpaySignature())) {
-            throw new BadRequestException("The Razorpay payment signature is invalid");
+        Map<String, Object> checkout = polar.fetchCheckout(request.checkoutId());
+        JsonNode checkoutNode = mapper.valueToTree(checkout);
+        String checkoutStatus = text(checkoutNode.get("status"));
+        if (!"succeeded".equalsIgnoreCase(checkoutStatus)) {
+            throw new BadRequestException(
+                    "Polar has not completed this checkout yet. Refresh in a moment.");
+        }
+
+        String checkoutWorkspace = workspaceFromCheckout(checkoutNode);
+        if (checkoutWorkspace == null || !checkoutWorkspace.equals(workspaceId)) {
+            throw new BadRequestException(
+                    "This checkout does not belong to the current workspace");
         }
 
         BillingRow row = ensureRow(workspaceId);
-        if (row.providerSubscriptionId() == null
-                || !row.providerSubscriptionId().equals(request.razorpaySubscriptionId())) {
-            throw new BadRequestException("This subscription does not belong to the current workspace");
+        String subscriptionId = text(checkoutNode.get("subscription_id"));
+        if (subscriptionId == null) {
+            // A webhook may already have linked the subscription locally even
+            // when the checkout endpoint has not populated subscription_id.
+            subscriptionId = row.providerSubscriptionId();
+        }
+        if (subscriptionId == null) {
+            subscriptionId = subscriptionFromCheckoutCustomer(
+                    checkoutNode, request.checkoutId(), workspaceId);
+        }
+        if (subscriptionId == null) {
+            throw new BadRequestException(
+                    "Polar has not created a subscription for this checkout yet. Refresh in a moment.");
         }
 
-        Map<String, Object> subscriptionMap = null;
-        try {
-            subscriptionMap = razorpay.fetchSubscription(request.razorpaySubscriptionId());
-        } catch (ApiException ex) {
-            log.warn("Could not fetch Razorpay subscription {} after checkout; using local fallback",
-                    request.razorpaySubscriptionId(), ex);
+        if (row.providerSubscriptionId() != null
+                && !row.providerSubscriptionId().equals(subscriptionId)) {
+            throw new BadRequestException(
+                    "This subscription does not belong to the current workspace");
         }
 
-        JsonNode subscriptionNode;
-        if (subscriptionMap != null) {
-            subscriptionNode = mapper.valueToTree(subscriptionMap);
-            String providerStatus = text(subscriptionMap.get("status"));
-            if (providerStatus == null || "created".equalsIgnoreCase(providerStatus)
-                    || "pending".equalsIgnoreCase(providerStatus)) {
-                ((ObjectNode) subscriptionNode).put("status", "active");
-            }
-        } else {
-            ObjectNode fallback = mapper.createObjectNode();
-            fallback.put("id", request.razorpaySubscriptionId());
-            fallback.put("status", "active");
-            subscriptionNode = fallback;
+        String interval = intervalFromCheckout(checkoutNode, row);
+        if (interval != null && !interval.equals(row.interval())) {
+            updateInterval(workspaceId, interval);
+            row = loadRow(workspaceId);
         }
 
-        BillingRow updated = updateFromSubscription(row, subscriptionNode, "checkout.verified");
-
-        Map<String, Object> payment = null;
-        try {
-            payment = razorpay.fetchPayment(request.razorpayPaymentId());
-        } catch (ApiException ex) {
-            log.warn("Could not fetch Razorpay payment {} after checkout; recording the verified payment",
-                    request.razorpayPaymentId(), ex);
-        }
-        recordPayment(workspaceId, request.razorpaySubscriptionId(), request.razorpayPaymentId(),
-                payment, amountFor(updated.interval()), properties.getCurrency());
-
+        Map<String, Object> subscription = polar.fetchSubscription(subscriptionId);
+        updateFromSubscription(row, mapper.valueToTree(subscription), "checkout.verified");
         return summaryFor(loadRow(workspaceId), principal);
     }
 
@@ -217,14 +208,20 @@ public class BillingService {
     public BillingSummaryDto cancel(AuthPrincipal principal) {
         String workspaceId = requireWorkspace(principal);
         requireAdmin(principal);
-        if (!razorpay.configured()) {
+        if (!polar.configured()) {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "Razorpay is not configured yet. Add RAZORPAY_KEY_ID and RAZORPAY_KEY_SECRET to backend/.env.");
+                    "Polar is not configured yet. Add POLAR_ACCESS_TOKEN, "
+                            + "POLAR_MONTHLY_PRODUCT_ID and POLAR_YEARLY_PRODUCT_ID to backend/.env.");
         }
 
         BillingRow row = ensureRow(workspaceId);
         if (row.providerSubscriptionId() == null) {
-            throw new BadRequestException("There is no Razorpay subscription to cancel");
+            throw new BadRequestException("There is no Polar subscription to cancel");
+        }
+        if (!"polar".equals(row.provider())) {
+            throw new BadRequestException(
+                    "This subscription was created with the previous payment provider. "
+                            + "Cancel it in the Razorpay dashboard and subscribe again with Polar.");
         }
         if (row.cancelAtPeriodEnd()) {
             return summaryFor(row, principal);
@@ -233,17 +230,8 @@ public class BillingService {
             throw new BadRequestException("There is no active subscription to cancel");
         }
 
-        Map<String, Object> subscription = razorpay.fetchSubscription(row.providerSubscriptionId());
-        JsonNode subscriptionNode = mapper.valueToTree(subscription);
-        BillingRow refreshed = updateFromSubscription(row, subscriptionNode, "checkout.refresh");
-        Instant currentEnd = refreshed.currentEnd() != null
-                ? refreshed.currentEnd()
-                : intervalEnd(refreshed.interval(), Instant.now());
-
-        razorpay.cancelSubscription(row.providerSubscriptionId(), true);
-        updateRow(refreshed, "CANCELLED", refreshed.interval(), refreshed.providerPlanId(),
-                refreshed.currentStart(), currentEnd, refreshed.trialEndsAt(), true,
-                refreshed.shortUrl());
+        Map<String, Object> subscription = polar.cancelSubscription(row.providerSubscriptionId());
+        updateFromSubscription(row, mapper.valueToTree(subscription), "subscription.canceled");
         return summaryFor(loadRow(workspaceId), principal);
     }
 
@@ -252,24 +240,24 @@ public class BillingService {
     // ------------------------------------------------------------------
 
     @Transactional
-    public void handleWebhook(String body, String signature, String eventId) {
-        if (!razorpay.webhookConfigured()) {
+    public void handleWebhook(String body, String eventId, String timestamp, String signature) {
+        if (!polar.webhookConfigured()) {
             throw new ApiException(HttpStatus.SERVICE_UNAVAILABLE,
-                    "RAZORPAY_WEBHOOK_SECRET is not configured");
+                    "POLAR_WEBHOOK_SECRET is not configured");
         }
-        String expected = BillingCrypto.hmacSha256Hex(body, properties.getWebhookSecret());
-        if (!BillingCrypto.constantTimeEquals(expected, signature)) {
-            throw new BadRequestException("Invalid Razorpay webhook signature");
+        if (!PolarWebhookVerifier.verify(body, eventId, timestamp, signature,
+                properties.getWebhookSecret())) {
+            throw new BadRequestException("Invalid Polar webhook signature");
         }
 
         JsonNode root;
         try {
             root = mapper.readTree(body);
         } catch (Exception ex) {
-            throw new BadRequestException("Invalid Razorpay webhook payload");
+            throw new BadRequestException("Invalid Polar webhook payload");
         }
 
-        String event = root.path("event").asText("");
+        String event = root.path("type").asText("");
         String dedupeId = eventId != null && !eventId.isBlank()
                 ? eventId
                 : BillingCrypto.sha256Hex(body);
@@ -282,50 +270,59 @@ public class BillingService {
             return;
         }
 
-        JsonNode subscription = root.path("payload").path("subscription").path("entity");
-        JsonNode payment = root.path("payload").path("payment").path("entity");
-        String subscriptionId = subscription.path("id").asText(null);
-        String workspaceId = subscription.path("notes").path("workspace_id").asText(null);
-
-        if (subscriptionId == null && payment.hasNonNull("subscription_id")) {
-            subscriptionId = payment.path("subscription_id").asText();
+        JsonNode data = root.path("data");
+        if (data.has("object") && data.path("object").isObject()) {
+            data = data.path("object");
         }
-
-        BillingRow row = subscriptionId == null ? null : findRowByProviderSubscription(subscriptionId);
-        if (row == null && workspaceId != null && !workspaceId.isBlank()) {
-            BillingRow candidate = ensureRow(workspaceId);
-            // Only use the workspace note when it does not point at a different
-            // Razorpay subscription. A late webhook from an abandoned checkout
-            // must not overwrite the current one.
-            if (candidate.providerSubscriptionId() == null
-                    || candidate.providerSubscriptionId().equals(subscriptionId)) {
-                row = candidate;
-            }
-        }
-        if (row == null) {
-            log.warn("Razorpay webhook {} could not be matched to a workspace", event);
+        if (!data.isObject()) {
+            log.warn("Polar webhook {} had no data object", event);
             return;
         }
 
-        if (subscription.isObject()) {
-            row = updateFromSubscription(row, subscription, event);
-        } else if (subscriptionId != null && event.startsWith("payment.")) {
-            try {
-                Map<String, Object> fetched = razorpay.fetchSubscription(subscriptionId);
-                row = updateFromSubscription(row, mapper.valueToTree(fetched), event);
-            } catch (ApiException ex) {
-                log.warn("Could not refresh subscription {} from payment webhook {}",
-                        subscriptionId, event, ex);
+        if (event.startsWith("subscription.")) {
+            String subscriptionId = text(data.get("id"));
+            String workspaceId = workspaceFromSubscription(data);
+            BillingRow row = subscriptionId == null
+                    ? null
+                    : findRowByProviderSubscription(subscriptionId);
+            if (row == null && workspaceId != null && !workspaceId.isBlank()) {
+                BillingRow candidate = loadRow(workspaceId);
+                // Only use the workspace when it does not point at a different
+                // Polar subscription. A late webhook from an abandoned checkout
+                // must not overwrite the current one.
+                if (candidate != null && (candidate.providerSubscriptionId() == null
+                        || candidate.providerSubscriptionId().equals(subscriptionId))) {
+                    row = candidate;
+                }
             }
-        }
-
-        if (payment.isObject()) {
-            String paymentId = payment.path("id").asText(null);
-            Map<String, Object> paymentMap = mapper.convertValue(payment,
-                    new TypeReference<Map<String, Object>>() {
-                    });
-            recordPayment(row.workspaceId(), subscriptionId, paymentId, paymentMap,
-                    amountFor(row.interval()), properties.getCurrency());
+            if (row == null) {
+                log.warn("Polar webhook {} could not be matched to a workspace", event);
+                return;
+            }
+            updateFromSubscription(row, data, event);
+        } else if (event.startsWith("order.")) {
+            String subscriptionId = text(data.get("subscription_id"));
+            BillingRow row = subscriptionId == null
+                    ? null
+                    : findRowByProviderSubscription(subscriptionId);
+            if (row == null) {
+                String workspaceId = workspaceFromOrder(data);
+                if (workspaceId != null && !workspaceId.isBlank()) {
+                    row = loadRow(workspaceId);
+                }
+            }
+            if (row == null) {
+                log.warn("Polar webhook {} could not be matched to a workspace", event);
+                return;
+            }
+            if ("order.paid".equals(event) || "order.refunded".equals(event)) {
+                String paymentId = text(data.get("id"));
+                Map<String, Object> payment = mapper.convertValue(data,
+                        new TypeReference<Map<String, Object>>() {
+                        });
+                recordPayment(row.workspaceId(), subscriptionId, paymentId, payment,
+                        amountFor(row.interval()), properties.getCurrency());
+            }
         }
     }
 
@@ -349,15 +346,15 @@ public class BillingService {
                 row.workspaceId(),
                 effective,
                 row.interval(),
-                properties.getProvider(),
+                row.provider() == null ? properties.getProvider() : row.provider(),
                 row.trialEndsAt(),
                 row.currentEnd(),
                 row.cancelAtPeriodEnd(),
                 access,
                 daysLeft,
-                razorpay.configured(),
-                razorpay.webhookConfigured(),
-                razorpay.testMode(),
+                polar.configured(),
+                polar.webhookConfigured(),
+                polar.testMode(),
                 principal != null && principal.isAdmin(),
                 row.shortUrl(),
                 properties.getTrialDays(),
@@ -418,8 +415,9 @@ public class BillingService {
         int trialDays = Math.max(1, properties.getTrialDays());
         jdbc.update("""
                 insert into billing_subscriptions
-                    (id, workspace_id, status, trial_ends_at, current_start, current_end, created_at, updated_at)
-                values (?, ?, 'TRIALING', now() + make_interval(days => ?), now(),
+                    (id, workspace_id, provider, status, trial_ends_at, current_start,
+                     current_end, created_at, updated_at)
+                values (?, ?, 'polar', 'TRIALING', now() + make_interval(days => ?), now(),
                         now() + make_interval(days => ?), now(), now())
                 on conflict (workspace_id) do nothing
                 """, Ids.uuid(), workspaceId, trialDays, trialDays);
@@ -458,6 +456,7 @@ public class BillingService {
         return new BillingRow(
                 rs.getString("id"),
                 rs.getString("workspace_id"),
+                rs.getString("provider"),
                 rs.getString("status"),
                 rs.getString("billing_interval"),
                 rs.getString("provider_plan_id"),
@@ -471,116 +470,191 @@ public class BillingService {
 
     private BillingRow updateFromSubscription(BillingRow row, JsonNode subscription, String event) {
         String providerStatus = text(subscription.get("status"));
+        boolean cancelAtPeriodEnd = subscription.path("cancel_at_period_end").asBoolean(false);
         String status = mapStatus(providerStatus, row.status());
 
-        if ("subscription.cancelled".equals(event)) {
-            status = "CANCELLED";
-        } else if ("subscription.completed".equals(event) || "subscription.expired".equals(event)) {
+        if ("subscription.revoked".equals(event)) {
             status = "EXPIRED";
-        } else if ("subscription.halted".equals(event)) {
+        } else if ("subscription.past_due".equals(event)) {
             status = "PAST_DUE";
-        } else if ("subscription.pending".equals(event)) {
-            status = "PENDING";
-        } else if ("subscription.activated".equals(event) || "subscription.charged".equals(event)
-                || "subscription.authenticated".equals(event)) {
-            if (!"CANCELLED".equals(status) && !"EXPIRED".equals(status)) {
-                status = "ACTIVE";
-            }
+        } else if ("subscription.paused".equals(event)) {
+            status = "EXPIRED";
+        } else if ("subscription.canceled".equals(event) && "ACTIVE".equals(status)) {
+            status = "CANCELLED";
+        }
+        if (cancelAtPeriodEnd && "ACTIVE".equals(status)) {
+            status = "CANCELLED";
         }
 
-        Instant start = firstNonNull(instant(subscription.get("current_start")), row.currentStart());
+        String interval = intervalFromSubscription(subscription, row);
+        String subscriptionId = firstNonNull(text(subscription.get("id")),
+                row.providerSubscriptionId());
+
+        Instant start = firstNonNull(instant(subscription.get("current_period_start")),
+                row.currentStart());
         if (start == null) {
             start = Instant.now();
         }
-        Instant end = instant(subscription.get("current_end"));
+        Instant end = firstNonNull(instant(subscription.get("current_period_end")),
+                instant(subscription.get("ends_at")));
+        if (end == null) {
+            end = instant(subscription.get("ended_at"));
+        }
         if (end == null) {
             Instant now = Instant.now();
-            if ("ACTIVE".equals(status) || "PENDING".equals(status)) {
-                // Razorpay can return an authenticated subscription before it
-                // fills in current_end. Never reuse the old trial end here, or
-                // a workspace that pays after the trial would stay locked out.
-                end = intervalEnd(row.interval(), now);
+            if ("ACTIVE".equals(status) || "PENDING".equals(status) || "CANCELLED".equals(status)) {
+                end = intervalEnd(interval, now);
             } else if (row.currentEnd() != null) {
                 end = row.currentEnd();
-            } else if ("PAST_DUE".equals(status) || "CANCELLED".equals(status)) {
-                end = intervalEnd(row.interval(), now);
+            } else if ("PAST_DUE".equals(status)) {
+                end = intervalEnd(interval, now);
             }
         }
 
-        String planId = firstNonNull(text(subscription.get("plan_id")), row.providerPlanId());
-        String shortUrl = firstNonNull(text(subscription.get("short_url")), row.shortUrl());
-        boolean cancelAtPeriodEnd = row.cancelAtPeriodEnd();
-        if ("subscription.cancelled".equals(event)) {
-            cancelAtPeriodEnd = true;
-        } else if ("subscription.activated".equals(event) || "subscription.charged".equals(event)) {
-            cancelAtPeriodEnd = false;
+        String planId = firstNonNull(text(subscription.get("product_id")), row.providerPlanId());
+        String shortUrl = row.shortUrl();
+        Instant trialEndsAt = row.trialEndsAt();
+        if ("TRIALING".equals(status)) {
+            Instant providerTrialEnd = instant(subscription.get("trial_end"));
+            if (providerTrialEnd != null) {
+                trialEndsAt = providerTrialEnd;
+            }
+            if (trialEndsAt == null) {
+                trialEndsAt = intervalEnd(interval, Instant.now());
+            }
+        } else if (!"PENDING".equals(status)) {
+            trialEndsAt = null;
         }
-        Instant trialEndsAt = "ACTIVE".equals(status) ? null : row.trialEndsAt();
 
-        updateRow(row, status, row.interval(), planId, start, end, trialEndsAt,
-                cancelAtPeriodEnd, shortUrl);
+        boolean cancelFlag = cancelAtPeriodEnd || "CANCELLED".equals(status);
+        updateRow(row, status, interval, planId, subscriptionId, start, end, trialEndsAt,
+                cancelFlag, shortUrl);
         return loadRow(row.workspaceId());
     }
 
     private void updateRow(BillingRow row, String status, String interval, String planId,
-            Instant currentStart, Instant currentEnd, Instant trialEndsAt,
-            boolean cancelAtPeriodEnd, String shortUrl) {
+            String providerSubscriptionId, Instant currentStart, Instant currentEnd,
+            Instant trialEndsAt, boolean cancelAtPeriodEnd, String shortUrl) {
         jdbc.update("""
                 update billing_subscriptions
-                set status = ?, billing_interval = ?, provider_plan_id = ?, current_start = ?,
-                    current_end = ?, trial_ends_at = ?, cancel_at_period_end = ?, short_url = ?,
-                    updated_at = now()
+                set provider = 'polar', status = ?, billing_interval = ?, provider_plan_id = ?,
+                    provider_subscription_id = ?, current_start = ?, current_end = ?,
+                    trial_ends_at = ?, cancel_at_period_end = ?, short_url = ?, updated_at = now()
                 where workspace_id = ?
                 """, (PreparedStatementSetter) ps -> {
             ps.setString(1, status);
             ps.setString(2, interval);
             ps.setString(3, planId);
-            setInstant(ps, 4, currentStart);
-            setInstant(ps, 5, currentEnd);
-            setInstant(ps, 6, trialEndsAt);
-            ps.setBoolean(7, cancelAtPeriodEnd);
-            ps.setString(8, shortUrl);
-            ps.setString(9, row.workspaceId());
+            ps.setString(4, providerSubscriptionId);
+            setInstant(ps, 5, currentStart);
+            setInstant(ps, 6, currentEnd);
+            setInstant(ps, 7, trialEndsAt);
+            ps.setBoolean(8, cancelAtPeriodEnd);
+            ps.setString(9, shortUrl);
+            ps.setString(10, row.workspaceId());
         });
     }
 
+    private void updateInterval(String workspaceId, String interval) {
+        jdbc.update("""
+                update billing_subscriptions
+                set provider = 'polar', billing_interval = ?, updated_at = now()
+                where workspace_id = ?
+                """, interval, workspaceId);
+    }
+
     // ------------------------------------------------------------------
-    // Razorpay plan / payment helpers
+    // Polar helpers
     // ------------------------------------------------------------------
 
-    private String ensurePlan(String interval, int amount, String currency) {
-        List<PlanRow> rows = jdbc.query("""
-                select provider_plan_id, amount, currency
-                from billing_plans where plan_key = ?
-                """, (rs, index) -> new PlanRow(
-                rs.getString("provider_plan_id"),
-                rs.getInt("amount"),
-                rs.getString("currency")), interval);
+    private String intervalFromCheckout(JsonNode checkout, BillingRow row) {
+        String plan = text(checkout.path("metadata").path("plan"));
+        if (isInterval(plan)) {
+            return plan;
+        }
+        String productId = text(checkout.get("product_id"));
+        return intervalFromProduct(productId, row.interval());
+    }
 
-        if (!rows.isEmpty()) {
-            PlanRow existing = rows.get(0);
-            if (existing.amount() == amount && currency.equals(existing.currency())) {
-                return existing.providerPlanId();
+    private String intervalFromSubscription(JsonNode subscription, BillingRow row) {
+        String plan = text(subscription.path("metadata").path("plan"));
+        if (isInterval(plan)) {
+            return plan;
+        }
+        String recurring = text(subscription.get("recurring_interval"));
+        if ("year".equalsIgnoreCase(recurring)) {
+            return "YEARLY";
+        }
+        if ("month".equalsIgnoreCase(recurring)) {
+            return "MONTHLY";
+        }
+        String productId = text(subscription.get("product_id"));
+        return intervalFromProduct(productId, row.interval());
+    }
+
+    private String intervalFromProduct(String productId, String fallback) {
+        if (productId != null) {
+            if (productId.equals(properties.getMonthlyProductId())) {
+                return "MONTHLY";
+            }
+            if (productId.equals(properties.getYearlyProductId())) {
+                return "YEARLY";
             }
         }
+        return fallback;
+    }
 
-        Map<String, Object> plan = razorpay.createPlan(interval, amount, currency);
-        String planId = text(plan.get("id"));
-        if (planId == null) {
-            throw new ApiException(HttpStatus.BAD_GATEWAY,
-                    "Razorpay did not return a plan id. Please try again.");
+    /**
+     * Polar has been observed returning a succeeded checkout with a null
+     * {@code subscription_id} even though the subscription exists and points
+     * back at the checkout. Recover it from the customer's subscriptions so
+     * the return page does not depend on webhook delivery.
+     */
+    String subscriptionFromCheckoutCustomer(JsonNode checkout, String checkoutId,
+            String workspaceId) {
+        String customerId = text(checkout.get("customer_id"));
+        if (customerId == null) {
+            return null;
         }
-        jdbc.update("""
-                insert into billing_plans
-                    (plan_key, provider, provider_plan_id, amount, currency, created_at, updated_at)
-                values (?, 'razorpay', ?, ?, ?, now(), now())
-                on conflict (plan_key) do update
-                set provider_plan_id = excluded.provider_plan_id,
-                    amount = excluded.amount,
-                    currency = excluded.currency,
-                    updated_at = now()
-                """, interval, planId, amount, currency);
-        return planId;
+        Map<String, Object> response = polar.listSubscriptionsByCustomer(customerId);
+        Object items = response.get("items");
+        if (!(items instanceof List<?> subscriptions)) {
+            return null;
+        }
+        for (Object item : subscriptions) {
+            JsonNode subscription = mapper.valueToTree(item);
+            String itemCheckout = text(subscription.get("checkout_id"));
+            String itemWorkspace = text(subscription.path("metadata").path("workspace_id"));
+            if (checkoutId.equals(itemCheckout)
+                    && (itemWorkspace == null || itemWorkspace.equals(workspaceId))) {
+                return text(subscription.get("id"));
+            }
+        }
+        return null;
+    }
+
+    private String workspaceFromCheckout(JsonNode checkout) {
+        String metadata = text(checkout.path("metadata").path("workspace_id"));
+        if (metadata != null) {
+            return metadata;
+        }
+        return text(checkout.get("external_customer_id"));
+    }
+
+    private String workspaceFromSubscription(JsonNode subscription) {
+        String metadata = text(subscription.path("metadata").path("workspace_id"));
+        if (metadata != null) {
+            return metadata;
+        }
+        return text(subscription.path("customer").path("external_id"));
+    }
+
+    private String workspaceFromOrder(JsonNode order) {
+        String metadata = text(order.path("metadata").path("workspace_id"));
+        if (metadata != null) {
+            return metadata;
+        }
+        return text(order.path("customer").path("external_id"));
     }
 
     private void recordPayment(String workspaceId, String subscriptionId, String paymentId,
@@ -591,12 +665,12 @@ public class BillingService {
         int amount = intValue(payment == null ? null : payment.get("amount"), fallbackAmount);
         String currency = firstNonNull(payment == null ? null : text(payment.get("currency")),
                 fallbackCurrency);
-        String status = firstNonNull(payment == null ? null : text(payment.get("status")), "captured");
+        String status = firstNonNull(payment == null ? null : text(payment.get("status")), "paid");
         jdbc.update("""
                 insert into billing_payments
                     (id, workspace_id, provider, provider_payment_id, provider_subscription_id,
                      amount, currency, status, created_at)
-                values (?, ?, 'razorpay', ?, ?, ?, ?, ?, now())
+                values (?, ?, 'polar', ?, ?, ?, ?, ?, now())
                 on conflict (provider_payment_id) do update set status = excluded.status
                 """, (PreparedStatementSetter) ps -> {
             ps.setString(1, Ids.uuid());
@@ -648,22 +722,32 @@ public class BillingService {
                 : zoned.plusMonths(1).toInstant();
     }
 
+    private static boolean isInterval(String value) {
+        return "MONTHLY".equals(value) || "YEARLY".equals(value);
+    }
+
     private static String mapStatus(String providerStatus, String fallback) {
         if (providerStatus == null) {
-            return fallback;
+            return fallback == null ? "PENDING" : fallback;
         }
         return switch (providerStatus.toLowerCase(Locale.ROOT)) {
-            case "active", "authenticated" -> "ACTIVE";
-            case "created", "pending" -> "PENDING";
-            case "halted" -> "PAST_DUE";
-            case "cancelled" -> "CANCELLED";
-            case "completed", "expired" -> "EXPIRED";
+            case "active" -> "ACTIVE";
+            case "trialing" -> "TRIALING";
+            case "incomplete" -> "PENDING";
+            case "incomplete_expired" -> "EXPIRED";
+            case "past_due", "unpaid" -> "PAST_DUE";
+            case "canceled" -> "CANCELLED";
+            case "paused" -> "EXPIRED";
             default -> fallback == null ? "PENDING" : fallback;
         };
     }
 
     private static String label(String interval) {
         return "YEARLY".equals(interval) ? "Yearly" : "Monthly";
+    }
+
+    private static String envName(String interval) {
+        return "YEARLY".equals(interval) ? "POLAR_YEARLY_PRODUCT_ID" : "POLAR_MONTHLY_PRODUCT_ID";
     }
 
     private static String text(Object value) {
@@ -705,12 +789,7 @@ public class BillingService {
                 return epoch > 0 ? Instant.ofEpochSecond(epoch) : null;
             }
             if (node.isTextual()) {
-                try {
-                    long epoch = Long.parseLong(node.asText());
-                    return epoch > 0 ? Instant.ofEpochSecond(epoch) : null;
-                } catch (NumberFormatException ignored) {
-                    return null;
-                }
+                return parseInstant(node.asText());
             }
             return null;
         }
@@ -719,14 +798,30 @@ public class BillingService {
             return epoch > 0 ? Instant.ofEpochSecond(epoch) : null;
         }
         if (value instanceof String text) {
+            return parseInstant(text);
+        }
+        return null;
+    }
+
+    private static Instant parseInstant(String text) {
+        if (text == null || text.isBlank()) {
+            return null;
+        }
+        try {
+            long epoch = Long.parseLong(text);
+            return epoch > 0 ? Instant.ofEpochSecond(epoch) : null;
+        } catch (NumberFormatException ignored) {
+            // Polar returns ISO-8601 timestamps.
+        }
+        try {
+            return Instant.parse(text);
+        } catch (Exception ignored) {
             try {
-                long epoch = Long.parseLong(text);
-                return epoch > 0 ? Instant.ofEpochSecond(epoch) : null;
-            } catch (NumberFormatException ignored) {
+                return OffsetDateTime.parse(text).toInstant();
+            } catch (Exception alsoIgnored) {
                 return null;
             }
         }
-        return null;
     }
 
     private static Instant instant(Timestamp value) {
@@ -748,6 +843,7 @@ public class BillingService {
     private record BillingRow(
             String id,
             String workspaceId,
+            String provider,
             String status,
             String interval,
             String providerPlanId,
@@ -757,8 +853,5 @@ public class BillingService {
             Instant trialEndsAt,
             boolean cancelAtPeriodEnd,
             String shortUrl) {
-    }
-
-    private record PlanRow(String providerPlanId, int amount, String currency) {
     }
 }

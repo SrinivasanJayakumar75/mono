@@ -33,7 +33,7 @@ import org.springframework.web.cors.UrlBasedCorsConfigurationSource;
  * Stateless JWT security.
  *
  * <p>Every endpoint requires a bearer token except the auth endpoints, the
- * signature-verified Razorpay webhook and the public messenger widget endpoints.
+ * signature-verified Polar webhook and the public messenger widget endpoints.
  */
 @Configuration
 @EnableWebSecurity

@@ -608,8 +608,9 @@ can subscribe. Amounts are in the smallest currency unit (paise for INR): monthl
 `status` is one of `TRIALING`, `PENDING`, `ACTIVE`, `PAST_DUE`, `CANCELLED` or `EXPIRED`.
 `access` is the server's answer to "may this workspace use the app right now?", and
 `canManage` is true only for workspace admins. `configured` is false until
-`RAZORPAY_KEY_ID` and `RAZORPAY_KEY_SECRET` are set; `webhookConfigured` is false until
-`RAZORPAY_WEBHOOK_SECRET` is set. `testMode` is true for `rzp_test_` keys.
+`POLAR_ACCESS_TOKEN`, `POLAR_MONTHLY_PRODUCT_ID` and `POLAR_YEARLY_PRODUCT_ID` are set;
+`webhookConfigured` is false until `POLAR_WEBHOOK_SECRET` is set. `testMode` is true when
+`POLAR_API_BASE_URL` points at `sandbox-api.polar.sh` or `POLAR_TEST_MODE=true`.
 
 ### GET `/api/billing`
 
@@ -620,7 +621,7 @@ Any workspace member can read the summary. Response `200`:
   "workspaceId": "uuid",
   "status": "TRIALING",
   "interval": null,
-  "provider": "razorpay",
+  "provider": "polar",
   "trialEndsAt": "2026-11-01T12:00:00Z",
   "currentPeriodEnd": "2026-11-01T12:00:00Z",
   "cancelAtPeriodEnd": false,
@@ -641,61 +642,58 @@ Any workspace member can read the summary. Response `200`:
 }
 ```
 
+`shortUrl` is the Polar hosted checkout URL while a checkout is pending; it is not a webhook URL.
+
 ### POST `/api/billing/checkout`
 
-Workspace admin only. Starts a Razorpay subscription checkout and stores it as `PENDING`.
+Workspace admin only. Creates a Polar checkout session and stores the local row as `PENDING`.
 Request `{ "interval": "MONTHLY" }` or `{ "interval": "YEARLY" }`. Response `200`:
 
 ```json
 {
-  "subscriptionId": "sub_...",
-  "keyId": "rzp_test_...",
-  "shortUrl": "https://rzp.io/i/...",
-  "name": "Monotron",
-  "description": "Monotron Monthly subscription",
-  "prefillName": "Ada",
-  "prefillEmail": "a@b.com",
+  "checkoutId": "checkout_uuid",
+  "url": "https://polar.sh/checkout/...",
   "interval": "MONTHLY",
   "amount": 39900,
   "currency": "INR"
 }
 ```
 
-Errors: `400` invalid interval, `403` not an admin, `409` a subscription is already active,
-`503` Razorpay keys are not configured, `502` Razorpay could not be reached.
+The browser should redirect to `url`. Errors: `400` invalid interval, `403` not an admin,
+`409` a subscription is already active, `503` Polar is not configured, `502` Polar could not
+create the checkout.
 
 ### POST `/api/billing/verify`
 
-Workspace admin only. Verifies the Razorpay Checkout success payload, activates the local
-subscription, records the payment and returns the same shape as `GET /api/billing`.
+Workspace admin only. Called when Polar redirects back after checkout. The server fetches the
+checkout, confirms it succeeded and belongs to the workspace, then fetches the subscription and
+returns the same shape as `GET /api/billing`.
 
 ```json
 {
-  "razorpay_payment_id": "pay_...",
-  "razorpay_subscription_id": "sub_...",
-  "razorpay_signature": "hex-hmac"
+  "checkout_id": "checkout_uuid"
 }
 ```
 
-The signature is `HMAC-SHA256(payment_id + "|" + subscription_id, key_secret)`. Errors: `400`
-invalid signature or a subscription that belongs to another workspace, `503` Razorpay keys are
-not configured.
+Errors: `400` the checkout is not complete, does not belong to the workspace, or has no
+subscription yet; `503` Polar is not configured.
 
 ### POST `/api/billing/cancel`
 
-Workspace admin only. Cancels at the end of the current billing period and returns the summary.
-`access` stays true until `currentPeriodEnd`; `status` becomes `CANCELLED` and
+Workspace admin only. Sets `cancel_at_period_end` on the Polar subscription and returns the
+summary. `access` stays true until `currentPeriodEnd`; `status` becomes `CANCELLED` and
 `cancelAtPeriodEnd` becomes true. Errors: `400` no active subscription, `403` not an admin,
-`503` Razorpay keys are not configured, `502` Razorpay could not be reached.
+`503` Polar is not configured, `502` Polar could not be reached.
 
 ### POST `/api/billing/webhook`
 
-Public Razorpay webhook. Send the raw event body with the `X-Razorpay-Signature` header (and
-optionally `X-Razorpay-Event-Id`). The server verifies
-`HMAC-SHA256(raw_body, RAZORPAY_WEBHOOK_SECRET)`, ignores duplicate event ids, updates the
-subscription from the `subscription` entity, and records `payment` entities in
-`billing_payments`. Response `200` `{ "status": "ok" }`.
+Public Polar webhook. Send the raw event body with the Standard Webhooks headers
+`webhook-id`, `webhook-timestamp` and `webhook-signature`. The server verifies
+`HMAC-SHA256(webhook-id + "." + webhook-timestamp + "." + raw_body, webhook_secret)`, ignoring
+duplicates by `webhook-id`. It updates the subscription from `subscription.*` events and records
+paid or refunded orders in `billing_payments`. Response `200` `{ "status": "ok" }`.
 
-Errors: `400` invalid signature or malformed payload, `503` `RAZORPAY_WEBHOOK_SECRET` is not
-configured. The webhook is intentionally outside the tenant transaction because Razorpay has no
-JWT; it matches rows by the subscription id or the `workspace_id` note written at checkout.
+Errors: `400` invalid signature or malformed payload, `503` `POLAR_WEBHOOK_SECRET` is not
+configured. The webhook is intentionally outside the tenant transaction because Polar has no
+JWT; it matches rows by the Polar subscription id or by the `workspace_id` metadata /
+`external_customer_id` written at checkout.
