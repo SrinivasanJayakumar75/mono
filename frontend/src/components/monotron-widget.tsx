@@ -1,4 +1,3 @@
-
 "use client";
 
 import { useEffect } from "react";
@@ -13,7 +12,7 @@ export function MonotronWidget() {
     const iframe = document.createElement("iframe");
 
     iframe.src =
-      "http://localhost:3000/widget/75699813803d432fbd98d162219b9b6c";
+      "https://www.monotron.in/widget/8b0338dd0f6ad1a7aa7bdc1ffedd8e66";
 
     iframe.title = "Monotron chat";
 
