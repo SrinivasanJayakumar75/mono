@@ -25,6 +25,7 @@ import { MonotronLogo } from "@/components/logo";
 
 const NAV_LINKS = [
   { href: "#product", label: "Product" },
+  { href: "/about", label: "About" },
   { href: "#inbox", label: "Inbox" },
   { href: "#knowledge", label: "Knowledge" },
   { href: "#pricing", label: "Pricing" },
@@ -606,6 +607,7 @@ export default function LandingPage() {
             <FooterColumn
               title="Resources"
               links={[
+                { href: "/about", label: "About us" },
                 { href: "#faq", label: "FAQ" },
                 { href: "#crm", label: "CRM" },
                 { href: "#platform", label: "Platform" },
