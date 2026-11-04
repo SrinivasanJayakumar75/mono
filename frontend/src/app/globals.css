@@ -2,6 +2,14 @@
 @tailwind components;
 @tailwind utilities;
 
+.policy-copy h3 {
+  margin-top: 1.5rem;
+  color: #1a1815;
+  font-size: 0.875rem;
+  font-weight: 600;
+  line-height: 1.5rem;
+}
+
 @layer base {
   :root {
     --mn-brand: 51 48 42;
