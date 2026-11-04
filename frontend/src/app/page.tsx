@@ -608,6 +608,7 @@ export default function LandingPage() {
               title="Resources"
               links={[
                 { href: "/about", label: "About us" },
+                { href: "/policies", label: "Privacy & policies" },
                 { href: "#faq", label: "FAQ" },
                 { href: "#crm", label: "CRM" },
                 { href: "#platform", label: "Platform" },
