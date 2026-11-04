@@ -9,8 +9,30 @@
 
 import type { ApiErrorBody, AuthTokens } from "./types";
 
-export const API_BASE_URL =
-  process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "") ?? "https://api.monotron.in";
+const CONFIGURED_API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL?.replace(/\/+$/, "");
+const PRODUCTION_API_BASE_URL = "https://api.monotron.in/api";
+const LOCAL_API_BASE_URL = "http://localhost:8080/api";
+
+function isLocalHostname(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
+}
+
+function resolveApiBaseUrl(): string {
+  const configured = CONFIGURED_API_BASE_URL;
+  if (typeof window === "undefined") {
+    return configured || PRODUCTION_API_BASE_URL;
+  }
+  if (isLocalHostname(window.location.hostname)) {
+    return configured || LOCAL_API_BASE_URL;
+  }
+  // A production build must never call localhost just because .env.local was
+  // present on the machine that ran `next build`.
+  const configuredPointsAtLocalhost =
+    !!configured && /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(?=[:/]|$)/i.test(configured);
+  return configured && !configuredPointsAtLocalhost ? configured : PRODUCTION_API_BASE_URL;
+}
+
+export const API_BASE_URL = resolveApiBaseUrl();
 
 export const ACCESS_TOKEN_KEY = "monotron.access";
 export const REFRESH_TOKEN_KEY = "monotron.refresh";

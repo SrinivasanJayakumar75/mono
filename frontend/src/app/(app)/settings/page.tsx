@@ -624,6 +624,12 @@ export default function SettingsPage() {
                 <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-all rounded-md bg-surface-900 p-3 font-mono text-[11px] leading-relaxed text-surface-100">
                   {embedSnippet || "Loading app id…"}
                 </pre>
+                {origin.startsWith("http://localhost") || origin.startsWith("http://127.0.0.1") ? (
+                  <p className="mt-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    This snippet points at localhost. Open the production workspace to copy the
+                    live embed code before adding it to a customer site.
+                  </p>
+                ) : null}
                 {widgetUrl ? (
                   <a
                     href={widgetUrl}

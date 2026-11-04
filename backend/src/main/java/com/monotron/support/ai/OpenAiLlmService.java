@@ -69,7 +69,8 @@ public class OpenAiLlmService implements LlmService {
         if (request.context() != null && !request.context().isEmpty()) {
             prompt.append("\n\nUse only the knowledge base excerpts below to answer. ")
                     .append("If the excerpts do not contain the answer, say so plainly and offer to escalate to a human agent. ")
-                    .append("Cite the source titles you used.\n\n");
+                    .append("Do not mention file names, document titles or source titles in the answer; ")
+                    .append("the app displays the sources separately as citations.\n\n");
             int index = 1;
             for (LlmService.ContextSnippet snippet : request.context()) {
                 prompt.append('[').append(index++).append("] ").append(snippet.title()).append('\n')

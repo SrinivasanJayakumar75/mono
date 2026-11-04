@@ -233,6 +233,11 @@ delete). **Auto-open on page load** is on by default, so the chat panel appears 
 embedded widget loads; turn it off under **Settings → Messenger widget** if you prefer the
 launcher-only experience. Backend CORS is pre-configured for `http://localhost:3000`.
 
+For a production build, set `NEXT_PUBLIC_API_BASE_URL=https://api.monotron.in/api` and
+`MONOTRON_CORS_ORIGINS=https://www.monotron.in` in the deployment environment. Copy the widget
+embed snippet from **Settings** on the production domain; a snippet copied while running locally
+points at `localhost` and will show “localhost refused to connect” on a live site.
+
 **Billing** in the sidebar opens the standalone `/billing` page. It shows the trial status,
 monthly (₹399) and yearly (₹3,990) cards, the Polar checkout, and cancellation. When a
 trial expires, protected pages redirect there and the API returns `402` until a subscription
