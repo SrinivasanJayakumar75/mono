@@ -261,7 +261,7 @@ public class RagService {
                     snippet(hit.content())));
         }
 
-        return new AnswerDto(result.content(), result.model(), result.provider(),
+        return new AnswerDto(AnswerText.stripSourceAnnotations(result.content()), result.model(), result.provider(),
                 CitationDto.dedupe(citations));
     }
 

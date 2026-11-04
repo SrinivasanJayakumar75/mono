@@ -4,6 +4,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
+import com.monotron.support.ai.AnswerText;
 import com.monotron.support.ai.RagService;
 import com.monotron.support.ai.dto.AnswerDto;
 import com.monotron.support.ai.dto.CitationDto;
@@ -101,13 +102,14 @@ public class ConversationService {
                        ct.id as contact_id, ct.name as contact_name, ct.email as contact_email,
                        ct.avatar_url as contact_avatar, ct.visitor_id, ct.online, ct.browser, ct.os, ct.location,
                        ct.locale, ct.last_seen_at,
-                       m.id as message_id, m.author_type, m.author_name, m.body, m.created_at as message_created_at
+                       m.id as message_id, m.author_type, m.author_name, m.body, m.created_at as message_created_at,
+                       m.citations as message_citations
                 from conversations c
                 join contacts ct on ct.id = c.contact_id
                 left join users u on u.id = c.assignee_id
                 left join teams t on t.id = c.team_id
                 left join lateral (
-                    select id, author_type, author_name, body, created_at
+                    select id, author_type, author_name, body, created_at, citations
                     from messages
                     where conversation_id = c.id
                     order by created_at desc
@@ -147,7 +149,8 @@ public class ConversationService {
                                 rs.getString("message_id"),
                                 rs.getString("author_type"),
                                 rs.getString("author_name"),
-                                rs.getString("body"),
+                                messageBody(rs.getString("author_type"), rs.getString("body"),
+                                        readCitations(rs.getString("message_citations"))),
                                 iso(rs.getTimestamp("message_created_at")))),
                 params.toArray());
 
@@ -164,16 +167,20 @@ public class ConversationService {
                 from messages
                 where conversation_id = ?
                 order by created_at asc
-                """, (rs, i) -> new MessageDto(
-                rs.getString("id"),
-                rs.getString("author_type"),
-                rs.getString("author_id"),
-                rs.getString("author_name"),
-                rs.getString("author_avatar_url"),
-                rs.getString("body"),
-                rs.getTimestamp("created_at").toInstant(),
-                readCitations(rs.getString("citations")),
-                rs.getString("feedback")), conversationId);
+                """, (rs, i) -> {
+            List<CitationDto> citations = readCitations(rs.getString("citations"));
+            String authorType = rs.getString("author_type");
+            return new MessageDto(
+                    rs.getString("id"),
+                    authorType,
+                    rs.getString("author_id"),
+                    rs.getString("author_name"),
+                    rs.getString("author_avatar_url"),
+                    messageBody(authorType, rs.getString("body"), citations),
+                    rs.getTimestamp("created_at").toInstant(),
+                    citations,
+                    rs.getString("feedback"));
+        }, conversationId);
         return new ConversationDetailDto(conversation, contact, messages);
     }
 
@@ -424,16 +431,20 @@ public class ConversationService {
         List<MessageDto> rows = jdbc.query("""
                 select id, author_type, author_id, author_name, author_avatar_url, body, created_at, citations, feedback
                 from messages where id = ?
-                """, (rs, i) -> new MessageDto(
-                rs.getString("id"),
-                rs.getString("author_type"),
-                rs.getString("author_id"),
-                rs.getString("author_name"),
-                rs.getString("author_avatar_url"),
-                rs.getString("body"),
-                rs.getTimestamp("created_at").toInstant(),
-                readCitations(rs.getString("citations")),
-                rs.getString("feedback")), messageId);
+                """, (rs, i) -> {
+            List<CitationDto> citations = readCitations(rs.getString("citations"));
+            String authorType = rs.getString("author_type");
+            return new MessageDto(
+                    rs.getString("id"),
+                    authorType,
+                    rs.getString("author_id"),
+                    rs.getString("author_name"),
+                    rs.getString("author_avatar_url"),
+                    messageBody(authorType, rs.getString("body"), citations),
+                    rs.getTimestamp("created_at").toInstant(),
+                    citations,
+                    rs.getString("feedback"));
+        }, messageId);
         if (rows.isEmpty()) {
             throw new NotFoundException("Message not found");
         }
@@ -455,6 +466,10 @@ public class ConversationService {
         } catch (JsonProcessingException ex) {
             return "[]";
         }
+    }
+
+    private static String messageBody(String authorType, String body, List<CitationDto> citations) {
+        return "AI".equals(authorType) ? AnswerText.forAiMessage(body, citations) : body;
     }
 
     private List<CitationDto> readCitations(String json) {

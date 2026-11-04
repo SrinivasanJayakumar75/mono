@@ -8,6 +8,7 @@ import java.util.Optional;
 
 import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.monotron.support.ai.AnswerText;
 import com.monotron.support.ai.RagService;
 import com.monotron.support.ai.dto.AnswerDto;
 import com.monotron.support.ai.dto.CitationDto;
@@ -337,10 +338,11 @@ public class WidgetService {
         }
 
         String id = Ids.uuid();
+        String body = AnswerText.forAiMessage(answer.answer(), answer.citations());
         jdbc.update("""
                 insert into messages (id, conversation_id, author_type, author_name, body, created_at, citations)
                 values (?, ?, 'AI', ?, ?, now(), ?::jsonb)
-                """, id, conversationId, app.name(), answer.answer(), writeCitations(answer.citations()));
+                """, id, conversationId, app.name(), body, writeCitations(answer.citations()));
 
         jdbc.update("""
                 update conversations
@@ -348,7 +350,7 @@ public class WidgetService {
                 where id = ?
                 """, conversationId);
 
-        return new WidgetMessageDto(id, "AI", app.name(), answer.answer(), nowIso(),
+        return new WidgetMessageDto(id, "AI", app.name(), body, nowIso(),
                 answer.citations() == null ? List.of() : answer.citations());
     }
 
@@ -387,13 +389,17 @@ public class WidgetService {
                 from messages
                 where conversation_id = ?
                 order by created_at asc
-                """, (rs, i) -> new WidgetMessageDto(
-                rs.getString("id"),
-                rs.getString("author_type"),
-                rs.getString("author_name"),
-                rs.getString("body"),
-                iso(rs.getTimestamp("created_at")),
-                readCitations(rs.getString("citations"))), conversationId);
+                """, (rs, i) -> {
+            List<CitationDto> citations = readCitations(rs.getString("citations"));
+            String authorType = rs.getString("author_type");
+            return new WidgetMessageDto(
+                    rs.getString("id"),
+                    authorType,
+                    rs.getString("author_name"),
+                    messageBody(authorType, rs.getString("body"), citations),
+                    iso(rs.getTimestamp("created_at")),
+                    citations);
+        }, conversationId);
 
         return new WidgetConversationDto(
                 base.id(), base.subject(), base.status(), base.createdAt(), base.lastActivityAt(), messages);
@@ -407,6 +413,10 @@ public class WidgetService {
         } catch (JsonProcessingException ex) {
             return "[]";
         }
+    }
+
+    private static String messageBody(String authorType, String body, List<CitationDto> citations) {
+        return "AI".equals(authorType) ? AnswerText.forAiMessage(body, citations) : body;
     }
 
     private List<CitationDto> readCitations(String json) {

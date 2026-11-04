@@ -209,6 +209,7 @@ Check 'semantic search finds the PDF chunk' {
 Check 'AI answer is grounded and cited' {
     $answer = Invoke-Api -Method Post -Path '/ai/answer' -Headers $auth -Body @{ question = 'How do I reset my password?' }
     Assert-True ($answer.answer.Length -gt 20) 'answer too short'
+    Assert-True (-not $answer.answer.Contains('(Source:')) 'answer repeats the source title'
     Assert-True ($answer.citations.Count -ge 1) 'no citations'
     Assert-True ($answer.citations[0].sourceId -eq $script:document.id) 'citation points at the wrong source'
     $sourceIds = @($answer.citations | ForEach-Object { $_.sourceId })
