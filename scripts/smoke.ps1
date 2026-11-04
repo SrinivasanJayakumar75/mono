@@ -211,6 +211,8 @@ Check 'AI answer is grounded and cited' {
     Assert-True ($answer.answer.Length -gt 20) 'answer too short'
     Assert-True ($answer.citations.Count -ge 1) 'no citations'
     Assert-True ($answer.citations[0].sourceId -eq $script:document.id) 'citation points at the wrong source'
+    $sourceIds = @($answer.citations | ForEach-Object { $_.sourceId })
+    Assert-True (($sourceIds | Select-Object -Unique).Count -eq $sourceIds.Count) 'citations contain duplicate sources'
 }
 
 # --------------------------------------------------------------------------

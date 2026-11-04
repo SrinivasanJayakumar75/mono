@@ -14,8 +14,8 @@ import java.util.Set;
  *
  * <p>The retrieved knowledge base passages are split into sentences and scored
  * against the customer's question with a lexical overlap measure. The best
- * matching sentences are then stitched into a readable answer together with the
- * titles they came from.
+ * matching sentences are then stitched into a readable answer; their source
+ * titles are returned separately as citations.
  *
  * <p>This is deliberately conservative: it never invents facts, it only reports
  * what the knowledge base actually contains, and it says so when nothing
@@ -74,17 +74,14 @@ public class LocalLlmService implements LlmService {
                     provider(), model());
         }
 
-        // Group by source so the answer reads coherently.
-        Map<String, List<String>> byTitle = new LinkedHashMap<>();
-        for (ScoredSentence sentence : selected) {
-            byTitle.computeIfAbsent(sentence.title(), key -> new ArrayList<>()).add(sentence.text());
-        }
-
+        // Keep the answer clean: sources are returned as citations separately,
+        // so repeating document titles in the body only creates noise.
         StringBuilder answer = new StringBuilder();
-        for (Map.Entry<String, List<String>> entry : byTitle.entrySet()) {
-            answer.append(entry.getKey()).append(": ");
-            answer.append(String.join(" ", entry.getValue()));
-            answer.append('\n');
+        for (ScoredSentence sentence : selected) {
+            if (!answer.isEmpty()) {
+                answer.append(' ');
+            }
+            answer.append(sentence.text());
         }
         return new ChatResult(answer.toString().trim(), provider(), model());
     }

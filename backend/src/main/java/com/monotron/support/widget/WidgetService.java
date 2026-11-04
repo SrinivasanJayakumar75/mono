@@ -414,8 +414,9 @@ public class WidgetService {
             return List.of();
         }
         try {
-            return mapper.readValue(json, mapper.getTypeFactory()
+            List<CitationDto> citations = mapper.readValue(json, mapper.getTypeFactory()
                     .constructCollectionType(List.class, CitationDto.class));
+            return CitationDto.dedupe(citations);
         } catch (JsonProcessingException ex) {
             return List.of();
         }

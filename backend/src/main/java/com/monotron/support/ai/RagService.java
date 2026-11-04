@@ -261,7 +261,8 @@ public class RagService {
                     snippet(hit.content())));
         }
 
-        return new AnswerDto(result.content(), result.model(), result.provider(), citations);
+        return new AnswerDto(result.content(), result.model(), result.provider(),
+                CitationDto.dedupe(citations));
     }
 
     private static boolean isSmallTalk(String question) {

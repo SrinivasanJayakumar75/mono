@@ -963,7 +963,7 @@ function CrmMockup() {
           <div className="mt-4 space-y-2 border-t border-surface-100 pt-3 text-[10.5px]">
             <div className="flex items-center justify-between">
               <span className="text-surface-400">Location</span>
-              <span className="text-surface-700">Bengaluru, IN</span>
+              <span className="text-surface-700">Chennai, IN</span>
             </div>
             <div className="flex items-center justify-between">
               <span className="text-surface-400">Channel</span>
