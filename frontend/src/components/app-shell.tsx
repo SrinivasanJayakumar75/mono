@@ -17,6 +17,7 @@ import {
   MenuIcon,
   SettingsIcon,
   UsersIcon,
+  WorkflowIcon,
 } from "./icons";
 import { MonotronLogo } from "./logo";
 import { Spinner, useToast } from "./ui";
@@ -33,6 +34,7 @@ interface NavItem {
 
 const NAV_ITEMS: NavItem[] = [
   { href: "/inbox", label: "Inbox", icon: <InboxIcon className="h-4 w-4" /> },
+  { href: "/channels", label: "Channels", icon: <WorkflowIcon className="h-4 w-4" /> },
   { href: "/crm", label: "CRM", icon: <LeadsIcon className="h-4 w-4" /> },
   { href: "/knowledge", label: "Knowledge", icon: <BookIcon className="h-4 w-4" /> },
   { href: "/contacts", label: "Contacts", icon: <UsersIcon className="h-4 w-4" /> },
@@ -42,6 +44,7 @@ const NAV_ITEMS: NavItem[] = [
 
 const TITLES: Record<string, string> = {
   "/inbox": "Inbox",
+  "/channels": "Channel automation",
   "/crm": "CRM",
   "/knowledge": "Knowledge base",
   "/contacts": "Contacts",

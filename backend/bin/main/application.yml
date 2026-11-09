@@ -53,6 +53,27 @@ monotron:
   google:
     # Public OAuth 2.0 Web client id. Leave empty to hide Google sign-in.
     client-id: ${GOOGLE_CLIENT_ID:}
+  channels:
+    # Encrypts tenant access/refresh tokens at rest. Leave empty to fall back
+    # to the JWT secret for local development; set a dedicated 32+ byte value
+    # in production.
+    encryption-key: ${CHANNEL_CREDENTIALS_KEY:}
+    state-secret: ${CHANNEL_OAUTH_STATE_SECRET:}
+    frontend-base-url: ${APP_FRONTEND_BASE_URL:http://localhost:3000}
+    gmail:
+      client-id: ${GMAIL_CLIENT_ID:${GOOGLE_CLIENT_ID:}}
+      client-secret: ${GMAIL_CLIENT_SECRET:}
+      redirect-uri: ${GMAIL_REDIRECT_URI:http://localhost:8080/api/channel-connections/GMAIL/oauth/callback}
+      polling-enabled: ${GMAIL_POLLING_ENABLED:true}
+      max-per-poll: ${GMAIL_MAX_PER_POLL:10}
+      poll-interval-ms: ${GMAIL_POLL_INTERVAL_MS:30000}
+      initial-delay-ms: ${GMAIL_INITIAL_DELAY_MS:15000}
+    meta:
+      app-id: ${META_APP_ID:}
+      app-secret: ${META_APP_SECRET:}
+      graph-version: ${META_GRAPH_VERSION:v23.0}
+      whatsapp-redirect-uri: ${META_WHATSAPP_REDIRECT_URI:http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback}
+      instagram-redirect-uri: ${META_INSTAGRAM_REDIRECT_URI:http://localhost:8080/api/channel-connections/INSTAGRAM/oauth/callback}
   storage:
     directory: ${MONOTRON_STORAGE_DIR:./data/uploads}
     max-upload-bytes: 26214400
@@ -76,21 +97,25 @@ monotron:
       top-k: 6
       min-score: 0.15
   billing:
-    # Set BILLING_ENFORCE=false only for local development without Razorpay keys.
+    # Set BILLING_ENFORCE=false only for local development without Polar keys.
     enforce: ${BILLING_ENFORCE:true}
-    provider: ${RAZORPAY_PROVIDER:razorpay}
-    key-id: ${RAZORPAY_KEY_ID:}
-    key-secret: ${RAZORPAY_KEY_SECRET:}
-    webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
-    api-base-url: ${RAZORPAY_API_BASE_URL:https://api.razorpay.com/v1}
-    currency: ${RAZORPAY_CURRENCY:INR}
+    provider: ${POLAR_PROVIDER:polar}
+    access-token: ${POLAR_ACCESS_TOKEN:}
+    webhook-secret: ${POLAR_WEBHOOK_SECRET:}
+    api-base-url: ${POLAR_API_BASE_URL:https://api.polar.sh/v1}
+    monthly-product-id: ${POLAR_MONTHLY_PRODUCT_ID:}
+    yearly-product-id: ${POLAR_YEARLY_PRODUCT_ID:}
+    # Polar redirects here after a successful checkout. The backend appends
+    # ?checkout=success&checkout_id={CHECKOUT_ID}.
+    success-url: ${POLAR_SUCCESS_URL:http://localhost:3000/billing}
+    currency: ${POLAR_CURRENCY:INR}
     # Amounts are in paise: 39900 = ₹399, 399000 = ₹3,990.
-    monthly-amount: ${RAZORPAY_MONTHLY_AMOUNT:39900}
-    yearly-amount: ${RAZORPAY_YEARLY_AMOUNT:399000}
+    monthly-amount: ${POLAR_MONTHLY_AMOUNT:39900}
+    yearly-amount: ${POLAR_YEARLY_AMOUNT:399000}
     trial-days: ${MONOTRON_TRIAL_DAYS:3}
-    monthly-cycles: ${RAZORPAY_MONTHLY_CYCLES:100}
-    yearly-cycles: ${RAZORPAY_YEARLY_CYCLES:10}
-    timeout: ${RAZORPAY_TIMEOUT:30s}
+    timeout: ${POLAR_TIMEOUT:30s}
+    # Set true when POLAR_API_BASE_URL points at sandbox-api.polar.sh.
+    test-mode: ${POLAR_TEST_MODE:false}
 
 management:
   endpoints:

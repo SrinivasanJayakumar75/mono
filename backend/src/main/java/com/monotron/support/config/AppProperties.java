@@ -18,6 +18,7 @@ public class AppProperties {
     private final Ai ai = new Ai();
     private final Billing billing = new Billing();
     private final Google google = new Google();
+    private final Channels channels = new Channels();
 
     public Jwt getJwt() {
         return jwt;
@@ -45,6 +46,10 @@ public class AppProperties {
 
     public Google getGoogle() {
         return google;
+    }
+
+    public Channels getChannels() {
+        return channels;
     }
 
     public static class Jwt {
@@ -275,6 +280,168 @@ public class AppProperties {
         public boolean isConfigured() {
             return clientId != null && !clientId.isBlank();
         }
+    }
+
+    /**
+     * OAuth and credential settings for Gmail, WhatsApp and Instagram.
+     *
+     * <p>The encryption key protects tenant access/refresh tokens at rest. When
+     * it is empty the application falls back to the JWT secret so local
+     * development keeps working; production should always set a dedicated
+     * {@code CHANNEL_CREDENTIALS_KEY}.
+     */
+    public static class Channels {
+        private String encryptionKey = "";
+        private String stateSecret = "";
+        private String frontendBaseUrl = "http://localhost:3000";
+        private final Gmail gmail = new Gmail();
+        private final Meta meta = new Meta();
+
+        public String getEncryptionKey() {
+            return encryptionKey;
+        }
+
+        public void setEncryptionKey(String encryptionKey) {
+            this.encryptionKey = encryptionKey;
+        }
+
+        public String getStateSecret() {
+            return stateSecret;
+        }
+
+        public void setStateSecret(String stateSecret) {
+            this.stateSecret = stateSecret;
+        }
+
+        public String getFrontendBaseUrl() {
+            return frontendBaseUrl;
+        }
+
+        public void setFrontendBaseUrl(String frontendBaseUrl) {
+            this.frontendBaseUrl = frontendBaseUrl;
+        }
+
+        public Gmail getGmail() {
+            return gmail;
+        }
+
+        public Meta getMeta() {
+            return meta;
+        }
+
+        public static class Gmail {
+            private String clientId = "";
+            private String clientSecret = "";
+            private String redirectUri = "http://localhost:8080/api/channel-connections/GMAIL/oauth/callback";
+            private boolean pollingEnabled = true;
+            private int maxPerPoll = 10;
+
+            public String getClientId() {
+                return clientId;
+            }
+
+            public void setClientId(String clientId) {
+                this.clientId = clientId;
+            }
+
+            public String getClientSecret() {
+                return clientSecret;
+            }
+
+            public void setClientSecret(String clientSecret) {
+                this.clientSecret = clientSecret;
+            }
+
+            public String getRedirectUri() {
+                return redirectUri;
+            }
+
+            public void setRedirectUri(String redirectUri) {
+                this.redirectUri = redirectUri;
+            }
+
+            public boolean isPollingEnabled() {
+                return pollingEnabled;
+            }
+
+            public void setPollingEnabled(boolean pollingEnabled) {
+                this.pollingEnabled = pollingEnabled;
+            }
+
+            public int getMaxPerPoll() {
+                return maxPerPoll;
+            }
+
+            public void setMaxPerPoll(int maxPerPoll) {
+                this.maxPerPoll = maxPerPoll;
+            }
+
+            public boolean isConfigured() {
+                return hasText(clientId) && hasText(clientSecret) && hasText(redirectUri);
+            }
+        }
+
+        public static class Meta {
+            private String appId = "";
+            private String appSecret = "";
+            private String graphVersion = "v23.0";
+            private String whatsappRedirectUri =
+                    "http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback";
+            private String instagramRedirectUri =
+                    "http://localhost:8080/api/channel-connections/INSTAGRAM/oauth/callback";
+
+            public String getAppId() {
+                return appId;
+            }
+
+            public void setAppId(String appId) {
+                this.appId = appId;
+            }
+
+            public String getAppSecret() {
+                return appSecret;
+            }
+
+            public void setAppSecret(String appSecret) {
+                this.appSecret = appSecret;
+            }
+
+            public String getGraphVersion() {
+                return graphVersion;
+            }
+
+            public void setGraphVersion(String graphVersion) {
+                this.graphVersion = graphVersion;
+            }
+
+            public String getWhatsappRedirectUri() {
+                return whatsappRedirectUri;
+            }
+
+            public void setWhatsappRedirectUri(String whatsappRedirectUri) {
+                this.whatsappRedirectUri = whatsappRedirectUri;
+            }
+
+            public String getInstagramRedirectUri() {
+                return instagramRedirectUri;
+            }
+
+            public void setInstagramRedirectUri(String instagramRedirectUri) {
+                this.instagramRedirectUri = instagramRedirectUri;
+            }
+
+            public String redirectUri(String channel) {
+                return "WHATSAPP".equalsIgnoreCase(channel) ? whatsappRedirectUri : instagramRedirectUri;
+            }
+
+            public boolean isConfigured() {
+                return hasText(appId) && hasText(appSecret);
+            }
+        }
+    }
+
+    private static boolean hasText(String value) {
+        return value != null && !value.isBlank();
     }
 
     /**

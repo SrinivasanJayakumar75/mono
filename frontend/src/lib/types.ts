@@ -146,6 +146,37 @@ export type WidgetSettingsUpdate = Partial<
   >
 >;
 
+export type AutomationChannel = "GMAIL" | "WHATSAPP" | "INSTAGRAM";
+
+export interface ChannelAutomation {
+  channel: AutomationChannel;
+  accountLabel: string;
+  enabled: boolean;
+  autoReply: boolean;
+  handoffToHuman: boolean;
+  updatedAt: string | null;
+}
+
+export type ChannelAutomationUpdate = Partial<
+  Pick<ChannelAutomation, "accountLabel" | "enabled" | "autoReply" | "handoffToHuman">
+>;
+
+export interface ChannelConnection {
+  channel: AutomationChannel;
+  connected: boolean;
+  accountLabel: string;
+  externalAccountId: string | null;
+  tokenExpiresAt: string | null;
+  scopes: string;
+  connectedAt: string | null;
+  oauthAvailable: boolean;
+}
+
+export interface ChannelOAuthStart {
+  channel: AutomationChannel;
+  authorizationUrl: string;
+}
+
 export interface DocumentSummary {
   id: string;
   filename: string;

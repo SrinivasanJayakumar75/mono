@@ -71,6 +71,7 @@ public class SecurityConfig {
                                 "/api/auth/refresh",
                                 "/api/auth/logout",
                                 "/api/billing/webhook",
+                                "/api/channel-connections/*/oauth/callback",
                                 "/api/widget/**",
                                 "/actuator/health",
                                 "/actuator/info",

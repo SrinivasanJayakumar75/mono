@@ -53,6 +53,27 @@ monotron:
   google:
     # Public OAuth 2.0 Web client id. Leave empty to hide Google sign-in.
     client-id: ${GOOGLE_CLIENT_ID:}
+  channels:
+    # Encrypts tenant access/refresh tokens at rest. Leave empty to fall back
+    # to the JWT secret for local development; set a dedicated 32+ byte value
+    # in production.
+    encryption-key: ${CHANNEL_CREDENTIALS_KEY:}
+    state-secret: ${CHANNEL_OAUTH_STATE_SECRET:}
+    frontend-base-url: ${APP_FRONTEND_BASE_URL:http://localhost:3000}
+    gmail:
+      client-id: ${GMAIL_CLIENT_ID:${GOOGLE_CLIENT_ID:}}
+      client-secret: ${GMAIL_CLIENT_SECRET:}
+      redirect-uri: ${GMAIL_REDIRECT_URI:http://localhost:8080/api/channel-connections/GMAIL/oauth/callback}
+      polling-enabled: ${GMAIL_POLLING_ENABLED:true}
+      max-per-poll: ${GMAIL_MAX_PER_POLL:10}
+      poll-interval-ms: ${GMAIL_POLL_INTERVAL_MS:30000}
+      initial-delay-ms: ${GMAIL_INITIAL_DELAY_MS:15000}
+    meta:
+      app-id: ${META_APP_ID:}
+      app-secret: ${META_APP_SECRET:}
+      graph-version: ${META_GRAPH_VERSION:v23.0}
+      whatsapp-redirect-uri: ${META_WHATSAPP_REDIRECT_URI:http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback}
+      instagram-redirect-uri: ${META_INSTAGRAM_REDIRECT_URI:http://localhost:8080/api/channel-connections/INSTAGRAM/oauth/callback}
   storage:
     directory: ${MONOTRON_STORAGE_DIR:./data/uploads}
     max-upload-bytes: 26214400

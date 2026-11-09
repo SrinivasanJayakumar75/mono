@@ -99,6 +99,13 @@ Useful configuration (all optional, see `backend/src/main/resources/application.
 | `MONOTRON_AI_PROVIDER` | `auto` (`openai` to force the remote provider) |
 | `OPENAI_API_KEY` / `OPENAI_BASE_URL` | empty / `https://api.openai.com/v1` |
 | `GOOGLE_CLIENT_ID` | empty (Google buttons hidden until set) |
+| `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | empty (Gmail connection disabled until both are set) |
+| `GMAIL_POLLING_ENABLED` | `true` (background Gmail import and auto-reply) |
+| `GMAIL_POLL_INTERVAL_MS` / `GMAIL_MAX_PER_POLL` | `30000` / `10` |
+| `META_APP_ID` / `META_APP_SECRET` | empty (WhatsApp and Instagram connections disabled until both are set) |
+| `APP_FRONTEND_BASE_URL` | `http://localhost:3000` (where OAuth callbacks return) |
+| `CHANNEL_CREDENTIALS_KEY` | empty (falls back to the JWT secret; set a dedicated value in production) |
+| `CHANNEL_OAUTH_STATE_SECRET` | empty (falls back to the JWT secret; set a dedicated value in production) |
 | `MONOTRON_STORAGE_DIR` | `./data/uploads` (must be writable; use a persistent volume in production) |
 | `POLAR_ACCESS_TOKEN` | empty (checkout disabled until set) |
 | `POLAR_MONTHLY_PRODUCT_ID` / `POLAR_YEARLY_PRODUCT_ID` | empty (checkout disabled until both are set) |
@@ -154,6 +161,56 @@ On **Sign in**, Google only signs in an existing account. On **Create your works
 creates a workspace with the defaults if the verified email is new. Accounts created with a
 password can also use Google later because accounts are matched by verified email. If the
 variable is empty the Google button is hidden and email/password auth is unchanged.
+
+#### Gmail, WhatsApp and Instagram connections
+
+Workspace administrators connect channels from **Channels** in the app. The browser is sent
+through the provider's OAuth screen; the backend exchanges the code and stores the tenant
+access/refresh tokens encrypted in PostgreSQL, scoped to that workspace. Tokens are never
+returned to the browser.
+
+Set a dedicated encryption key and state secret in production:
+
+```dotenv
+CHANNEL_CREDENTIALS_KEY=replace-with-a-long-random-value
+CHANNEL_OAUTH_STATE_SECRET=replace-with-another-long-random-value
+APP_FRONTEND_BASE_URL=https://www.monotron.in
+```
+
+**Gmail**
+
+1. Enable the Gmail API in Google Cloud Console.
+2. Create an OAuth 2.0 **Web application** client and add the backend callback as an
+   authorized redirect URI, for example
+   `https://api.monotron.in/api/channel-connections/GMAIL/oauth/callback`.
+3. Add `GMAIL_CLIENT_ID` and `GMAIL_CLIENT_SECRET` to the backend environment. The app requests
+   read-only Gmail access plus send permission so it can ingest and answer email. On the Google
+   consent screen, leave **Read your email** checked; without `gmail.readonly` Monotron can only
+   send replies, not see incoming mail.
+4. Keep the OAuth app in **Testing** only for a trial. Add each mailbox under **Test users**, and
+   complete Google verification before letting public customers connect restricted Gmail scopes.
+
+Monotron polls connected Gmail mailboxes every 30 seconds (configurable with
+`GMAIL_POLL_INTERVAL_MS`). Unread customer emails become inbox conversations; when **Enable
+channel** and **AI auto-reply** are both on, the AI answer is sent back in the same Gmail thread.
+The **Check now** button on Channels triggers an immediate import. Background polling can be
+disabled with `GMAIL_POLLING_ENABLED=false`.
+
+**WhatsApp and Instagram**
+
+1. Create a Meta app in [Meta for Developers](https://developers.facebook.com/apps/) and add
+   Facebook Login for Business.
+2. Add these redirect URIs (using your public backend host):
+   `https://api.monotron.in/api/channel-connections/WHATSAPP/oauth/callback` and
+   `https://api.monotron.in/api/channel-connections/INSTAGRAM/oauth/callback`.
+3. Set `META_APP_ID` and `META_APP_SECRET`. The app requests WhatsApp business management and
+   messaging permissions, or Instagram messaging and page permissions, depending on the channel.
+4. Complete Meta's app review / business verification for the messaging permissions before
+   connecting production customer accounts.
+
+The **Connect** buttons stay disabled until the matching provider variables are present. Gmail
+uses background polling for live ingestion; WhatsApp and Instagram currently store the connection
+and token metadata while their webhooks and live message ingestion are the next step.
 
 #### Polar subscriptions
 
