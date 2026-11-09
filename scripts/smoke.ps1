@@ -170,6 +170,44 @@ Check 'dashboard, widget settings and workspace are readable' {
     Assert-True ($null -ne $ws.app.hmacSecret) 'workspace app secret missing'
 }
 
+Check 'Gmail, WhatsApp and Instagram automation can be configured' {
+    $channels = Invoke-Api -Method Get -Path '/channel-automations' -Headers $auth
+    Assert-True ($channels.Count -eq 3) 'expected three channels'
+    $gmail = Invoke-Api -Method Put -Path '/channel-automations/GMAIL' -Headers $auth -Body @{
+        accountLabel   = 'support@example.com'
+        enabled        = $true
+        autoReply      = $true
+        handoffToHuman = $true
+    }
+    Assert-True ($gmail.channel -eq 'GMAIL') 'gmail channel mismatch'
+    Assert-True ($gmail.enabled) 'gmail automation was not enabled'
+    Assert-True ($gmail.accountLabel -eq 'support@example.com') 'gmail account label was not saved'
+    $whatsapp = Invoke-Api -Method Put -Path '/channel-automations/WHATSAPP' -Headers $auth -Body @{
+        accountLabel   = '+91 90000 00000'
+        enabled        = $true
+        autoReply      = $false
+        handoffToHuman = $true
+    }
+    Assert-True ($whatsapp.channel -eq 'WHATSAPP') 'whatsapp channel mismatch'
+    Assert-True (-not $whatsapp.autoReply) 'whatsapp auto reply was not disabled'
+    $instagram = Invoke-Api -Method Put -Path '/channel-automations/INSTAGRAM' -Headers $auth -Body @{
+        accountLabel = '@monotron'
+        enabled      = $false
+    }
+    Assert-True ($instagram.channel -eq 'INSTAGRAM') 'instagram channel mismatch'
+    Assert-True (-not $instagram.enabled) 'instagram automation should be disabled'
+    $saved = Invoke-Api -Method Get -Path '/channel-automations' -Headers $auth
+    Assert-True (($saved | Where-Object { $_.channel -eq 'GMAIL' }).enabled) 'gmail setting was not persisted'
+    Assert-True (($saved | Where-Object { $_.channel -eq 'WHATSAPP' }).accountLabel -eq '+91 90000 00000') 'whatsapp setting was not persisted'
+}
+
+Check 'channel connections are isolated and start disconnected' {
+    $connections = Invoke-Api -Method Get -Path '/channel-connections' -Headers $auth
+    Assert-True ($connections.Count -eq 3) 'expected three channel connections'
+    Assert-True (($connections | Where-Object { $_.connected }).Count -eq 0) 'new workspace already has a connection'
+    Assert-True (($connections | Where-Object { $_.channel -eq 'GMAIL' }).oauthAvailable -is [bool]) 'gmail oauth availability missing'
+}
+
 Check 'refresh rotates the token' {
     $refreshed = Invoke-Api -Method Post -Path '/auth/refresh' -Body @{ refreshToken = $session.refreshToken }
     Assert-True ($refreshed.refreshToken -ne $session.refreshToken) 'refresh token was not rotated'
