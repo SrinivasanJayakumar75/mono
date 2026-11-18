@@ -71,6 +71,7 @@ monotron:
     meta:
       app-id: ${META_APP_ID:}
       app-secret: ${META_APP_SECRET:}
+      webhook-verify-token: ${META_WEBHOOK_VERIFY_TOKEN:}
       graph-version: ${META_GRAPH_VERSION:v23.0}
       whatsapp-redirect-uri: ${META_WHATSAPP_REDIRECT_URI:http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback}
       instagram-redirect-uri: ${META_INSTAGRAM_REDIRECT_URI:http://localhost:8080/api/channel-connections/INSTAGRAM/oauth/callback}

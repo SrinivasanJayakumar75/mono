@@ -7,8 +7,8 @@ All request/response bodies are `application/json; charset=utf-8` unless stated 
 
 - **Auth**: `Authorization: Bearer <accessToken>` on every endpoint except the
   `/api/auth/register`, `/api/auth/login`, `/api/auth/google`, `/api/auth/google/config`,
-  `/api/auth/refresh`, `/api/auth/logout`, `/api/billing/webhook` and all
-  `/api/widget/**` endpoints.
+  `/api/auth/refresh`, `/api/auth/logout`, `/api/billing/webhook`,
+  `/api/channel-webhooks/**` and all `/api/widget/**` endpoints.
 - **Paywall**: every workspace API except auth, billing and the public widget returns
   `402 Payment Required` after the 3-day trial ends. The normal error shape is used, so the
   browser can show the message and redirect to `/billing`.
@@ -325,7 +325,10 @@ Query: `status` (`OPEN|CLOSED`), `q` (subject/contact name/email contains),
 
 ### POST `/api/conversations/{id}/reply`
 Request `{ "body": "hello" }` → `200` message object (authorType `AGENT`).
-Sets `last_activity_at`, clears `unread_count`.
+Sets `last_activity_at`, clears `unread_count`. For Gmail, WhatsApp and Instagram
+conversations the reply is delivered to the customer through the connected
+provider; a provider rejection returns an error and rolls back the message.
+Widget replies stay on the widget's realtime channel.
 
 ### POST `/api/conversations/{id}/assign` — request `{ "assigneeId": "uuid" | null }` → `200` conversation.
 ### POST `/api/conversations/{id}/team` — request `{ "teamId": "uuid" | null }` → `200` conversation.
@@ -342,6 +345,8 @@ resumes AI auto-replies.
 ```json
 { "id": "uuid", "authorType": "AI", "body": "…", "citations": [ { "title": "…", "sourceType": "DOCUMENT", "sourceId": "uuid", "url": null, "score": 0.83 } ], "createdAt": "…" }
 ```
+Like an agent reply, an AI reply on a Gmail, WhatsApp or Instagram conversation is
+also sent to the customer. Widget AI replies stay on the widget's realtime channel.
 
 ### GET `/api/conversations/stats`
 ```json

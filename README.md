@@ -27,6 +27,7 @@ db/         database helpers (the live schema is managed by Flyway in the backen
 | Knowledge base | PDF upload (max 25 MB) -> PDFBox text extraction -> overlapping chunking -> embeddings -> `content_chunks` with a pgvector column. Ingestion is asynchronous; poll the document until `READY`/`FAILED`. |
 | AI | Provider `auto`: uses any OpenAI-compatible endpoint when `OPENAI_API_KEY` is set, otherwise bundled local providers (deterministic hashed embeddings + a grounded extractive answer composer) so the whole stack runs offline. Retrieval is cosine similarity via `1 - (embedding <=> ?::vector)`. |
 | Human handoff | Agents can **Escalate** a conversation from the inbox. While escalated the widget still records visitor messages but skips automatic AI replies, so the assistant and a live agent never answer over each other. Escalating also claims an unassigned thread; **Resume AI** hands it back. |
+| Channel replies | A human reply in the inbox is delivered back to the original channel: Gmail replies are sent in the same thread, and WhatsApp/Instagram replies go out through the Meta APIs. The message is committed only after the provider accepts it, so a rejected send is shown as an error and does not leave a phantom message. Widget conversations continue to use their own realtime channel. |
 | CRM | Ten resources (leads, deals, companies, contacts, tasks, calls, meetings, products, orders, documents) share one whitelisted descriptor registry, so the REST surface is `GET/POST/PATCH/DELETE /api/crm/{resource}[/{id}]` rather than ten hand-written controllers. Orders own line items and expose computed `itemCount` / `totalAmount`; the `/crm` page includes an overview plus per-module tables and forms. CRM contacts are a separate table from the widget visitor directory at `/contacts`. An inbox conversation can promote its visitor into a lead with **Add to CRM**; the action is idempotent and the thread shows **In CRM** once linked. |
 | Billing | New workspaces get a 3-day trial. When it expires, a server-side MVC interceptor returns `402 Payment Required` for workspace APIs while auth, billing and the public widget stay reachable, so the user can pay. Polar Subscriptions handles monthly (₹399) and yearly (₹3,990) plans; checkout redirects and webhooks are verified on the server. Billing tables are global (no RLS) because webhooks arrive without a tenant, and every workspace-facing query filters by `workspace_id`. |
 | Frontend | Typed API client that mirrors `docs/API.md`, tokens in `localStorage` (`monotron.access`, `monotron.refresh`), transparent single retry after a 401 refresh. A global `402` handler moves an expired workspace to the standalone `/billing` page. |
@@ -103,6 +104,7 @@ Useful configuration (all optional, see `backend/src/main/resources/application.
 | `GMAIL_POLLING_ENABLED` | `true` (background Gmail import and auto-reply) |
 | `GMAIL_POLL_INTERVAL_MS` / `GMAIL_MAX_PER_POLL` | `30000` / `10` |
 | `META_APP_ID` / `META_APP_SECRET` | empty (WhatsApp and Instagram connections disabled until both are set) |
+| `META_WEBHOOK_VERIFY_TOKEN` | empty (Meta webhook verification disabled until set) |
 | `APP_FRONTEND_BASE_URL` | `http://localhost:3000` (where OAuth callbacks return) |
 | `CHANNEL_CREDENTIALS_KEY` | empty (falls back to the JWT secret; set a dedicated value in production) |
 | `CHANNEL_OAUTH_STATE_SECRET` | empty (falls back to the JWT secret; set a dedicated value in production) |
@@ -193,6 +195,7 @@ APP_FRONTEND_BASE_URL=https://www.monotron.in
 Monotron polls connected Gmail mailboxes every 30 seconds (configurable with
 `GMAIL_POLL_INTERVAL_MS`). Unread customer emails become inbox conversations; when **Enable
 channel** and **AI auto-reply** are both on, the AI answer is sent back in the same Gmail thread.
+A reply written by a human agent in the inbox is also sent through Gmail in the same thread.
 The **Check now** button on Channels triggers an immediate import. Background polling can be
 disabled with `GMAIL_POLLING_ENABLED=false`.
 
@@ -203,14 +206,51 @@ disabled with `GMAIL_POLLING_ENABLED=false`.
 2. Add these redirect URIs (using your public backend host):
    `https://api.monotron.in/api/channel-connections/WHATSAPP/oauth/callback` and
    `https://api.monotron.in/api/channel-connections/INSTAGRAM/oauth/callback`.
-3. Set `META_APP_ID` and `META_APP_SECRET`. The app requests WhatsApp business management and
-   messaging permissions, or Instagram messaging and page permissions, depending on the channel.
-4. Complete Meta's app review / business verification for the messaging permissions before
+3. Set the backend variables:
+
+   ```dotenv
+   META_APP_ID=...
+   META_APP_SECRET=...
+   META_WEBHOOK_VERIFY_TOKEN=replace-with-a-random-string
+   META_GRAPH_VERSION=v23.0
+   META_WHATSAPP_REDIRECT_URI=https://api.monotron.in/api/channel-connections/WHATSAPP/oauth/callback
+   META_INSTAGRAM_REDIRECT_URI=https://api.monotron.in/api/channel-connections/INSTAGRAM/oauth/callback
+   ```
+
+4. In the Meta app dashboard, configure the webhook callback URL:
+
+   ```text
+   https://api.monotron.in/api/channel-webhooks/meta
+   ```
+
+   Use the same value as `META_WEBHOOK_VERIFY_TOKEN`. Subscribe to the `messages` field for
+   both the **WhatsApp Business Account** and **Instagram** objects.
+
+5. For WhatsApp, enable the Cloud API and add a phone number to the WhatsApp Business account.
+   Monotron subscribes the app to the WABA during connection. For Instagram, link the Instagram
+   professional account to a Facebook Page and grant the Page messaging permissions. Meta must
+   also have the Instagram `messages` webhook subscription enabled in the app dashboard.
+
+6. Complete Meta's app review / business verification for the messaging permissions before
    connecting production customer accounts.
 
-The **Connect** buttons stay disabled until the matching provider variables are present. Gmail
-uses background polling for live ingestion; WhatsApp and Instagram currently store the connection
-and token metadata while their webhooks and live message ingestion are the next step.
+If the Meta user can manage more than one WhatsApp number or Instagram account, Monotron connects
+the first eligible account returned by the Graph API. Use a Meta user that only manages the account
+you want to connect, or disconnect and reconnect with the correct user.
+
+WhatsApp and Instagram use signed webhooks for live ingestion, so no polling job is needed. Each
+inbound message becomes an inbox conversation. When **Enable channel** and **AI auto-reply** are
+both on, Monotron sends the AI answer back through the WhatsApp Cloud API or Instagram Messaging
+API. Human agent replies from the inbox use the same outbound APIs. The AI auto-reply is only
+sent for text or captioned messages; media-only messages are imported with a placeholder so an
+agent can follow up. Meta requires the customer to have messaged the business within the last
+24 hours for a normal reply.
+
+Meta signs every POST with `X-Hub-Signature-256`; Monotron verifies it against the exact raw body
+using `META_APP_SECRET`. Webhook requests are public but contain no bearer token, and the workspace
+is resolved from the provider account id stored in `channel_account_lookup`.
+
+The **Connect** buttons stay disabled until `META_APP_ID` and `META_APP_SECRET` are present.
 
 #### Polar subscriptions
 

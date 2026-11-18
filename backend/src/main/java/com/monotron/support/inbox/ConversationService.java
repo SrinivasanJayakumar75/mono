@@ -8,6 +8,7 @@ import com.monotron.support.ai.AnswerText;
 import com.monotron.support.ai.RagService;
 import com.monotron.support.ai.dto.AnswerDto;
 import com.monotron.support.ai.dto.CitationDto;
+import com.monotron.support.channels.ChannelOutboundService;
 import com.monotron.support.common.BadRequestException;
 import com.monotron.support.common.ForbiddenException;
 import com.monotron.support.common.Ids;
@@ -45,14 +46,16 @@ public class ConversationService {
     private final AppService appService;
     private final ObjectMapper mapper;
     private final RealtimePublisher realtime;
+    private final ChannelOutboundService channelOutbound;
 
     public ConversationService(JdbcTemplate jdbc, RagService ragService, AppService appService, ObjectMapper mapper,
-            RealtimePublisher realtime) {
+            RealtimePublisher realtime, ChannelOutboundService channelOutbound) {
         this.jdbc = jdbc;
         this.ragService = ragService;
         this.appService = appService;
         this.mapper = mapper;
         this.realtime = realtime;
+        this.channelOutbound = channelOutbound;
     }
 
     // ------------------------------------------------------------------
@@ -224,6 +227,10 @@ public class ConversationService {
                 values (?, ?, 'AGENT', ?, ?, ?, now(), '[]'::jsonb, null)
                 """, messageId, conversationId, principal.userId(), principal.name(), trimmed);
 
+        // External channels are delivered before commit. If the provider rejects
+        // the message, the exception rolls back the inbox message too.
+        channelOutbound.deliver(conversationId, trimmed);
+
         jdbc.update("""
                 update conversations
                 set last_activity_at = now(), unread_count = 0, updated_at = now()
@@ -339,13 +346,19 @@ public class ConversationService {
         String systemPrompt = app == null ? null : app.aiSystemPrompt();
 
         AnswerDto answer = ragService.answer(prompt, systemPrompt, temperature);
+        String answerBody = AnswerText.forAiMessage(answer.answer(), answer.citations());
+        if (answerBody == null || answerBody.isBlank()) {
+            answerBody = "Thanks for your message. A teammate will follow up shortly.";
+        }
 
         String messageId = Ids.uuid();
         jdbc.update("""
                 insert into messages (id, conversation_id, author_type, author_name, body, created_at, citations)
                 values (?, ?, 'AI', ?, ?, now(), ?::jsonb)
-                """, messageId, conversationId, app == null ? "Assistant" : app.name(), answer.answer(),
+                """, messageId, conversationId, app == null ? "Assistant" : app.name(), answerBody,
                 writeCitations(answer.citations()));
+
+        channelOutbound.deliver(conversationId, answerBody);
 
         jdbc.update("""
                 update conversations

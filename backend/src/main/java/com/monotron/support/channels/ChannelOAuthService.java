@@ -5,9 +5,12 @@ import java.nio.charset.StandardCharsets;
 import java.sql.Timestamp;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+import com.fasterxml.jackson.core.JsonProcessingException;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.monotron.support.channels.dto.OAuthStartDto;
 import com.monotron.support.common.ApiException;
 import com.monotron.support.common.ForbiddenException;
@@ -68,6 +71,8 @@ public class ChannelOAuthService {
     private final JdbcTemplate jdbc;
     private final TransactionTemplate transactionTemplate;
     private final TenantBinding tenantBinding;
+    private final MetaApiClient metaApiClient;
+    private final ObjectMapper mapper;
     private final RestClient restClient;
 
     public ChannelOAuthService(AppProperties properties,
@@ -75,13 +80,17 @@ public class ChannelOAuthService {
                                ChannelCredentialCrypto crypto,
                                JdbcTemplate jdbc,
                                TransactionTemplate transactionTemplate,
-                               TenantBinding tenantBinding) {
+                               TenantBinding tenantBinding,
+                               MetaApiClient metaApiClient,
+                               ObjectMapper mapper) {
         this.properties = properties;
         this.stateService = stateService;
         this.crypto = crypto;
         this.jdbc = jdbc;
         this.transactionTemplate = transactionTemplate;
         this.tenantBinding = tenantBinding;
+        this.metaApiClient = metaApiClient;
+        this.mapper = mapper;
         SimpleClientHttpRequestFactory requestFactory = new SimpleClientHttpRequestFactory();
         requestFactory.setConnectTimeout(Duration.ofSeconds(10));
         requestFactory.setReadTimeout(Duration.ofSeconds(20));
@@ -226,7 +235,7 @@ public class ChannelOAuthService {
         String email = profile == null ? null : string(profile.get("email"));
         String id = profile == null ? null : string(profile.get("id"));
 
-        return new TokenResult(accessToken, refreshToken, expiresAt, scope, email, id);
+        return new TokenResult(accessToken, refreshToken, expiresAt, scope, email, id, Map.of());
     }
 
     private TokenResult exchangeMeta(String channel, String code) {
@@ -268,22 +277,56 @@ public class ChannelOAuthService {
                 ? expiry(shortLived.get("expires_in"))
                 : expiry(longLived.get("expires_in"));
 
-        Map<String, Object> profile = restClient.get()
-                .uri(uriBuilder -> uriBuilder
-                        .scheme("https")
-                        .host("graph.facebook.com")
-                        .path("/" + meta.getGraphVersion() + "/me")
-                        .queryParam("fields", "id,name,username")
-                        .queryParam("access_token", accessToken)
-                        .build())
-                .retrieve()
-                .body(MAP_TYPE);
-        String id = profile == null ? null : string(profile.get("id"));
-        String username = profile == null ? null : string(profile.get("username"));
-        String name = profile == null ? null : string(profile.get("name"));
-        String label = username != null ? username : name;
+        return "WHATSAPP".equals(channel)
+                ? whatsappToken(accessToken, expiresAt)
+                : instagramToken(accessToken);
+    }
 
-        return new TokenResult(accessToken, null, expiresAt, String.join(",", scopes(channel)), label, id);
+    private TokenResult whatsappToken(String accessToken, Instant expiresAt) {
+        List<MetaApiClient.WhatsAppAccount> accounts = metaApiClient.whatsappAccounts(accessToken);
+        if (accounts.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Meta did not return a WhatsApp Business phone number. "
+                            + "Add a phone number to the WhatsApp Business account and try again.");
+        }
+        MetaApiClient.WhatsAppAccount account = accounts.get(0);
+        try {
+            metaApiClient.subscribeWhatsApp(account.wabaId(), accessToken);
+        } catch (RuntimeException ex) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "WhatsApp connected, but Meta rejected the webhook subscription: " + ex.getMessage(), ex);
+        }
+
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("phoneNumberId", account.phoneNumberId());
+        metadata.put("wabaId", account.wabaId());
+        metadata.put("displayPhoneNumber", blankToEmpty(account.displayPhoneNumber()));
+        metadata.put("verifiedName", blankToEmpty(account.verifiedName()));
+        String label = firstNonBlank(
+                account.displayPhoneNumber(), account.verifiedName(), account.wabaName(), "WhatsApp");
+        return new TokenResult(accessToken, null, expiresAt,
+                String.join(",", WHATSAPP_SCOPES), label, account.phoneNumberId(), metadata);
+    }
+
+    private TokenResult instagramToken(String userAccessToken) {
+        List<MetaApiClient.InstagramAccount> accounts = metaApiClient.instagramAccounts(userAccessToken);
+        if (accounts.isEmpty()) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Meta did not return an Instagram professional account linked to a Facebook Page. "
+                            + "Link the Instagram account to a Page and grant the Page permissions.");
+        }
+        MetaApiClient.InstagramAccount account = accounts.get(0);
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("pageId", account.pageId());
+        metadata.put("igUserId", account.instagramId());
+        metadata.put("username", blankToEmpty(account.username()));
+        metadata.put("pageName", blankToEmpty(account.pageName()));
+        String label = firstNonBlank(
+                account.username(), account.displayName(), account.pageName(), "Instagram");
+        // A long-lived Page token is used for Instagram Messaging. It does not
+        // have a conventional refresh token; reconnecting is the recovery path.
+        return new TokenResult(account.pageAccessToken(), null, null,
+                String.join(",", INSTAGRAM_SCOPES), label, account.instagramId(), metadata);
     }
 
     private Map<String, Object> postForm(String url, MultiValueMap<String, String> form) {
@@ -308,8 +351,9 @@ public class ChannelOAuthService {
                 jdbc.update("""
                         insert into channel_credentials
                             (id, channel, external_account_id, account_label, encrypted_access_token,
-                             encrypted_refresh_token, token_expires_at, scopes, connected_at, updated_at)
-                        values (?, ?, ?, ?, ?, ?, ?, ?, now(), now())
+                             encrypted_refresh_token, token_expires_at, scopes, metadata,
+                             connected_at, updated_at)
+                        values (?, ?, ?, ?, ?, ?, ?, ?, ?::jsonb, now(), now())
                         on conflict (workspace_id, channel) do update
                         set external_account_id = excluded.external_account_id,
                             account_label = excluded.account_label,
@@ -319,6 +363,7 @@ public class ChannelOAuthService {
                                 channel_credentials.encrypted_refresh_token),
                             token_expires_at = excluded.token_expires_at,
                             scopes = excluded.scopes,
+                            metadata = excluded.metadata,
                             connected_at = now(),
                             updated_at = now()
                         """,
@@ -329,11 +374,47 @@ public class ChannelOAuthService {
                         crypto.encrypt(tokens.accessToken()),
                         crypto.encrypt(tokens.refreshToken()),
                         tokens.expiresAt() == null ? null : Timestamp.from(tokens.expiresAt()),
-                        tokens.scopes() == null ? "" : tokens.scopes());
+                        tokens.scopes() == null ? "" : tokens.scopes(),
+                        writeMetadata(tokens.metadata()));
+
+                if (!"GMAIL".equals(channel)) {
+                    // A reconnect can move the provider account to a different
+                    // workspace, so clear this workspace's old routes first.
+                    jdbc.update("""
+                            delete from channel_account_lookup
+                            where workspace_id = ? and channel = ?
+                            """, workspaceId, channel);
+                    if (tokens.externalAccountId() != null
+                            && !tokens.externalAccountId().isBlank()) {
+                        saveLookup(channel, tokens.externalAccountId(), workspaceId);
+                    }
+                    String pageId = tokens.metadata().get("pageId");
+                    if (pageId != null && !pageId.isBlank()
+                            && !pageId.equals(tokens.externalAccountId())) {
+                        saveLookup(channel, pageId, workspaceId);
+                    }
+                }
             } finally {
                 tenantBinding.clear();
             }
         });
+    }
+
+    private void saveLookup(String channel, String externalAccountId, String workspaceId) {
+        jdbc.update("""
+                insert into channel_account_lookup (channel, external_account_id, workspace_id, updated_at)
+                values (?, ?, ?, now())
+                on conflict (channel, external_account_id) do update
+                set workspace_id = excluded.workspace_id, updated_at = now()
+                """, channel, externalAccountId, workspaceId);
+    }
+
+    private String writeMetadata(Map<String, String> metadata) {
+        try {
+            return mapper.writeValueAsString(metadata == null ? Map.of() : metadata);
+        } catch (JsonProcessingException ex) {
+            throw new IllegalStateException("Could not store channel metadata", ex);
+        }
     }
 
     private static Instant expiry(Object value) {
@@ -374,12 +455,28 @@ public class ChannelOAuthService {
         throw new ForbiddenException("You do not have permission to connect channels");
     }
 
+    private static String firstNonBlank(String... values) {
+        if (values != null) {
+            for (String value : values) {
+                if (value != null && !value.isBlank()) {
+                    return value;
+                }
+            }
+        }
+        return "";
+    }
+
+    private static String blankToEmpty(String value) {
+        return value == null ? "" : value;
+    }
+
     private record TokenResult(
             String accessToken,
             String refreshToken,
             Instant expiresAt,
             String scopes,
             String accountLabel,
-            String externalAccountId) {
+            String externalAccountId,
+            Map<String, String> metadata) {
     }
 }

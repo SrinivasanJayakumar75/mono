@@ -11,6 +11,7 @@ frontend/.env.*
 
 # Backend build + runtime data
 backend/build/
+backend/bin/
 backend/.gradle/
 backend/data/
 

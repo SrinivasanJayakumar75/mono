@@ -384,6 +384,7 @@ public class AppProperties {
         public static class Meta {
             private String appId = "";
             private String appSecret = "";
+            private String webhookVerifyToken = "";
             private String graphVersion = "v23.0";
             private String whatsappRedirectUri =
                     "http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback";
@@ -404,6 +405,14 @@ public class AppProperties {
 
             public void setAppSecret(String appSecret) {
                 this.appSecret = appSecret;
+            }
+
+            public String getWebhookVerifyToken() {
+                return webhookVerifyToken;
+            }
+
+            public void setWebhookVerifyToken(String webhookVerifyToken) {
+                this.webhookVerifyToken = webhookVerifyToken;
             }
 
             public String getGraphVersion() {
@@ -436,6 +445,10 @@ public class AppProperties {
 
             public boolean isConfigured() {
                 return hasText(appId) && hasText(appSecret);
+            }
+
+            public boolean isWebhookConfigured() {
+                return hasText(appSecret) && hasText(webhookVerifyToken);
             }
         }
     }

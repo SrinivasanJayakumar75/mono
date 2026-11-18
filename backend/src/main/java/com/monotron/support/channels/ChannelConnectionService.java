@@ -60,9 +60,14 @@ public class ChannelConnectionService {
 
     @Transactional
     public void disconnect(AuthPrincipal principal, String channel) {
-        requireWorkspace(principal);
+        String workspaceId = requireWorkspace(principal);
         requireEditor(principal);
-        jdbc.update("delete from channel_credentials where channel = ?", normalizeChannel(channel));
+        String normalized = normalizeChannel(channel);
+        jdbc.update("delete from channel_credentials where channel = ?", normalized);
+        jdbc.update("""
+                delete from channel_account_lookup
+                where workspace_id = ? and channel = ?
+                """, workspaceId, normalized);
     }
 
     /**
