@@ -18,6 +18,8 @@ import com.monotron.support.common.Ids;
 import com.monotron.support.config.AppProperties;
 import com.monotron.support.security.AuthPrincipal;
 import com.monotron.support.security.TenantBinding;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
@@ -29,6 +31,7 @@ import org.springframework.util.LinkedMultiValueMap;
 import org.springframework.util.MultiValueMap;
 import org.springframework.web.client.RestClient;
 import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestClientResponseException;
 import org.springframework.web.util.UriComponentsBuilder;
 
 /**
@@ -41,6 +44,8 @@ import org.springframework.web.util.UriComponentsBuilder;
  */
 @Service
 public class ChannelOAuthService {
+
+    private static final Logger log = LoggerFactory.getLogger(ChannelOAuthService.class);
 
     private static final ParameterizedTypeReference<Map<String, Object>> MAP_TYPE =
             new ParameterizedTypeReference<>() {
@@ -387,6 +392,7 @@ public class ChannelOAuthService {
     }
 
     private TokenResult exchangeInstagramUnified(String code, AppProperties.Channels.Meta meta) {
+        String redirectUri = meta.getInstagramRedirectUri();
         Map<String, Object> token;
         try {
             token = restClient.get()
@@ -396,11 +402,24 @@ public class ChannelOAuthService {
                             .path("/" + meta.getGraphVersion() + "/oauth/access_token")
                             .queryParam("client_id", meta.getAppId())
                             .queryParam("client_secret", meta.getAppSecret())
+                            .queryParam("redirect_uri", redirectUri)
                             .queryParam("code", code)
                             .build())
                     .retrieve()
                     .body(MAP_TYPE);
+        } catch (RestClientResponseException ex) {
+            String detail = ex.getResponseBodyAsString();
+            log.warn("Instagram Unified Login code exchange failed: HTTP {} {} redirect_uri={}",
+                    ex.getStatusCode().value(), detail, redirectUri);
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Meta rejected the Instagram authorization code (HTTP "
+                            + ex.getStatusCode().value() + "): " + detail
+                            + " redirect_uri=" + redirectUri
+                            + ". The redirect URL in the Unified Login configuration must match "
+                            + "this value exactly. Click Connect again in a fresh tab; a code "
+                            + "can only be exchanged once and expires quickly.", ex);
         } catch (RestClientException ex) {
+            log.warn("Instagram Unified Login code exchange failed", ex);
             throw new ApiException(HttpStatus.BAD_GATEWAY,
                     "Meta rejected the Instagram authorization code. Check the Unified Login "
                             + "configuration and the redirect URI.", ex);
