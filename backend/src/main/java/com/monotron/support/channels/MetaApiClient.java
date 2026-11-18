@@ -161,6 +161,24 @@ public class MetaApiClient {
     }
 
     /**
+     * Reads a single WhatsApp phone number by id. This is used when the WABA
+     * and phone number ids are supplied explicitly through the environment.
+     */
+    public WhatsAppAccount whatsappPhoneNumber(String phoneNumberId, String wabaId,
+                                               String accessToken) {
+        Map<String, Object> body = get(accessToken, "/" + phoneNumberId, Map.of(
+                "fields", "display_phone_number,verified_name"));
+        return new WhatsAppAccount(
+                null,
+                null,
+                wabaId,
+                null,
+                phoneNumberId,
+                string(body.get("display_phone_number")),
+                string(body.get("verified_name")));
+    }
+
+    /**
      * Subscribes the Meta app to the WhatsApp business account. WhatsApp webhook
      * delivery requires this step in addition to the app-level callback URL.
      */

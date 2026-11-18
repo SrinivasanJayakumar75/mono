@@ -230,6 +230,9 @@ leaving `META_INSTAGRAM_CONFIG_ID` empty.
    META_GRAPH_VERSION=v23.0
    META_WHATSAPP_REDIRECT_URI=https://api.monotron.in/api/channel-connections/WHATSAPP/oauth/callback
    META_INSTAGRAM_REDIRECT_URI=https://api.monotron.in/api/channel-connections/INSTAGRAM/oauth/callback
+   # Optional: use a specific WhatsApp number instead of the first one Meta returns.
+   META_WHATSAPP_WABA_ID=
+   META_WHATSAPP_PHONE_NUMBER_ID=
    ```
 
    `META_INSTAGRAM_CONFIG_ID` is the Facebook Login for Business configuration id, not a
@@ -256,6 +259,30 @@ leaving `META_INSTAGRAM_CONFIG_ID` empty.
 7. Complete Meta's app review / business verification for the messaging permissions
    before connecting production customer accounts. Instagram messaging needs
    Advanced Access to serve accounts you do not own.
+
+**Connecting from localhost**
+
+Meta validates the redirect host against **App settings → Basic → App Domains**. If the
+host is missing, the Meta login succeeds but the browser ends on
+`Can't load URL. The domain of this URL isn't included in the app's domains.` Fix it before
+connecting either channel:
+
+1. Open **App settings → Basic → App Domains** and add `localhost` (keep your production
+   domain too), then save.
+2. Open **Facebook Login for Business → Settings** and add both local callback URLs to
+   **Valid OAuth Redirect URIs**:
+   `http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback` and
+   `http://localhost:8080/api/channel-connections/INSTAGRAM/oauth/callback`.
+3. For Instagram, use the same localhost URL as the **Redirect URL** inside the Unified
+   Login configuration. A mismatch redirects to a different host and the local callback
+   never runs.
+4. For WhatsApp, open **WhatsApp → API Setup**, add the free test number (or your own
+   number), add your personal number as a test recipient, and note the **Phone number ID**
+   and **WhatsApp Business Account ID**. Log in with a Facebook account that administers
+   that business. If automatic discovery still returns no number, put the two IDs in
+   `.env` as `META_WHATSAPP_WABA_ID` and `META_WHATSAPP_PHONE_NUMBER_ID` and restart.
+5. Webhooks need a public HTTPS URL; Meta cannot reach `localhost`. Use a tunnel or the
+   deployed backend for `https://…/api/channel-webhooks/meta`.
 
 If the Meta user can manage more than one WhatsApp number, Monotron connects the first
 eligible number returned by the Graph API. For Instagram, Monotron connects the first

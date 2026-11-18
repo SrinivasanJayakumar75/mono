@@ -418,7 +418,12 @@ public class ChannelOAuthService {
                 metaApiClient.instagramUnifiedProfile(accessToken);
         if (account.igUserId() == null || account.igUserId().isBlank()) {
             throw new ApiException(HttpStatus.BAD_GATEWAY,
-                    "Meta did not return an Instagram professional account for this login.");
+                    "Meta did not return an Instagram professional account. Open the Meta App "
+                            + "Dashboard, edit the Unified Login configuration and make sure it "
+                            + "requests an Instagram account asset with instagram_basic and "
+                            + "instagram_manage_messages, save the same Instagram redirect URL, "
+                            + "then reconnect and select the account. In Development mode the "
+                            + "account must also accept an Instagram Tester invite.");
         }
         try {
             metaApiClient.subscribeInstagramUnified(account.igUserId(), accessToken);
@@ -441,13 +446,30 @@ public class ChannelOAuthService {
     }
 
     private TokenResult whatsappToken(String accessToken, Instant expiresAt) {
-        List<MetaApiClient.WhatsAppAccount> accounts = metaApiClient.whatsappAccounts(accessToken);
-        if (accounts.isEmpty()) {
-            throw new ApiException(HttpStatus.BAD_GATEWAY,
-                    "Meta did not return a WhatsApp Business phone number. "
-                            + "Add a phone number to the WhatsApp Business account and try again.");
+        AppProperties.Channels.Meta meta = properties.getChannels().getMeta();
+        MetaApiClient.WhatsAppAccount account;
+        if (meta.hasPartialWhatsAppManualConfig()) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Set both META_WHATSAPP_WABA_ID and META_WHATSAPP_PHONE_NUMBER_ID, "
+                            + "or leave both empty.");
         }
-        MetaApiClient.WhatsAppAccount account = accounts.get(0);
+        if (meta.isWhatsAppManualConfigured()) {
+            account = metaApiClient.whatsappPhoneNumber(
+                    meta.getWhatsappPhoneNumberId(), meta.getWhatsappWabaId(), accessToken);
+        } else {
+            List<MetaApiClient.WhatsAppAccount> accounts =
+                    metaApiClient.whatsappAccounts(accessToken);
+            if (accounts.isEmpty()) {
+                throw new ApiException(HttpStatus.BAD_GATEWAY,
+                        "Meta did not return a WhatsApp Business phone number. In the Meta App "
+                                + "Dashboard open WhatsApp -> API Setup, add a test phone number "
+                                + "(or add your own number in WhatsApp Manager), then reconnect "
+                                + "with a Facebook account that administers that business. You can "
+                                + "also set META_WHATSAPP_WABA_ID and "
+                                + "META_WHATSAPP_PHONE_NUMBER_ID to use a number directly.");
+            }
+            account = accounts.get(0);
+        }
         try {
             metaApiClient.subscribeWhatsApp(account.wabaId(), accessToken);
         } catch (RuntimeException ex) {

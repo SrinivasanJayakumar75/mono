@@ -400,6 +400,13 @@ public class AppProperties {
             private String instagramAppSecret = "";
             private String webhookVerifyToken = "";
             private String graphVersion = "v23.0";
+            /**
+             * Optional manual WhatsApp identifiers. They let a workspace
+             * connect when the OAuth token cannot enumerate the business's
+             * WhatsApp accounts (common for client businesses and agencies).
+             */
+            private String whatsappWabaId = "";
+            private String whatsappPhoneNumberId = "";
             private String whatsappRedirectUri =
                     "http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback";
             private String instagramRedirectUri =
@@ -461,6 +468,22 @@ public class AppProperties {
                 this.graphVersion = graphVersion;
             }
 
+            public String getWhatsappWabaId() {
+                return whatsappWabaId;
+            }
+
+            public void setWhatsappWabaId(String whatsappWabaId) {
+                this.whatsappWabaId = whatsappWabaId;
+            }
+
+            public String getWhatsappPhoneNumberId() {
+                return whatsappPhoneNumberId;
+            }
+
+            public void setWhatsappPhoneNumberId(String whatsappPhoneNumberId) {
+                this.whatsappPhoneNumberId = whatsappPhoneNumberId;
+            }
+
             public String getWhatsappRedirectUri() {
                 return whatsappRedirectUri;
             }
@@ -479,6 +502,20 @@ public class AppProperties {
 
             public boolean isWhatsAppConfigured() {
                 return hasText(appId) && hasText(appSecret);
+            }
+
+            /**
+             * True when both WhatsApp identifiers were provided explicitly. This
+             * skips the business portfolio lookup that can be empty for client
+             * businesses and agency-owned WhatsApp accounts.
+             */
+            public boolean isWhatsAppManualConfigured() {
+                return hasText(whatsappWabaId) && hasText(whatsappPhoneNumberId);
+            }
+
+            /** True when only one of the two manual WhatsApp identifiers is set. */
+            public boolean hasPartialWhatsAppManualConfig() {
+                return hasText(whatsappWabaId) != hasText(whatsappPhoneNumberId);
             }
 
             /** True when the Instagram credentials are available. */

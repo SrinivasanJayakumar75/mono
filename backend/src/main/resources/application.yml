@@ -81,6 +81,10 @@ monotron:
       instagram-app-secret: ${META_INSTAGRAM_APP_SECRET:}
       webhook-verify-token: ${META_WEBHOOK_VERIFY_TOKEN:}
       graph-version: ${META_GRAPH_VERSION:v23.0}
+      # Optional WhatsApp identifiers. When both are set Monotron uses them
+      # directly instead of enumerating the user's business portfolios.
+      whatsapp-waba-id: ${META_WHATSAPP_WABA_ID:}
+      whatsapp-phone-number-id: ${META_WHATSAPP_PHONE_NUMBER_ID:}
       whatsapp-redirect-uri: ${META_WHATSAPP_REDIRECT_URI:http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback}
       instagram-redirect-uri: ${META_INSTAGRAM_REDIRECT_URI:http://localhost:8080/api/channel-connections/INSTAGRAM/oauth/callback}
   storage:
