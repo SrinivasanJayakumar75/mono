@@ -19,8 +19,11 @@ import org.springframework.web.client.RestClientResponseException;
 /**
  * Small Meta Graph API client for WhatsApp Cloud API and Instagram Messaging.
  *
- * <p>The client is stateless. Tenant access/page tokens are always passed in by
- * the caller and are never cached here.
+ * <p>The client is stateless. Tenant access tokens are always passed in by
+ * the caller and are never cached here. WhatsApp uses
+ * {@code graph.facebook.com}. Instagram uses {@code graph.facebook.com} with
+ * Unified Login and {@code graph.instagram.com} with the legacy Instagram
+ * Login flow.
  */
 @Component
 public class MetaApiClient {
@@ -60,35 +63,65 @@ public class MetaApiClient {
     }
 
     /**
-     * Finds Facebook Pages that have a linked Instagram professional account.
-     * The returned page access token is the token used for Instagram messaging.
+     * Reads the Instagram professional account behind an Instagram Login
+     * access token. {@code user_id} is the account id Meta uses in webhook
+     * payloads; {@code id} is the app-scoped fallback.
      */
-    public List<InstagramAccount> instagramAccounts(String userAccessToken) {
-        Map<String, Object> body = get(userAccessToken, "/me/accounts", Map.of(
-                "fields", "id,name,access_token,instagram_business_account{id,username,name}",
-                "limit", "100"));
-        List<InstagramAccount> accounts = new ArrayList<>();
-        for (Map<String, Object> page : list(body.get("data"))) {
-            Map<String, Object> instagram = map(page.get("instagram_business_account"));
-            String instagramId = string(instagram.get("id"));
-            String pageId = string(page.get("id"));
-            if (instagramId == null || instagramId.isBlank()
-                    || pageId == null || pageId.isBlank()) {
-                continue;
-            }
-            String pageToken = string(page.get("access_token"));
-            if (pageToken == null || pageToken.isBlank()) {
-                continue;
-            }
-            accounts.add(new InstagramAccount(
-                    pageId,
-                    string(page.get("name")),
-                    pageToken,
-                    instagramId,
-                    string(instagram.get("username")),
-                    string(instagram.get("name"))));
+    public InstagramProfile instagramProfile(String accessToken) {
+        Map<String, Object> body = getOnHost("graph.instagram.com", versionPath("/me"),
+                accessToken, Map.of("fields", "user_id,username,name,account_type"));
+        String userId = string(body.get("user_id"));
+        if (userId == null || userId.isBlank()) {
+            userId = string(body.get("id"));
         }
-        return accounts;
+        return new InstagramProfile(
+                userId,
+                string(body.get("username")),
+                string(body.get("name")),
+                string(body.get("account_type")));
+    }
+
+    /**
+     * Enables Instagram message notifications for the connected account.
+     * Dashboard field selection alone does not create the per-account
+     * subscription.
+     */
+    public void subscribeInstagram(String igUserId, String accessToken) {
+        postOnHost("graph.instagram.com", versionPath(igUserId + "/subscribed_apps"),
+                Map.of("subscribed_fields", "messages"), accessToken);
+    }
+
+    /**
+     * Reads the Instagram professional account shared through Unified Login.
+     * With a Business Integration System User token {@code /me} is the system
+     * user, so the account is resolved through
+     * {@code /me/assigned_instagram_accounts}.
+     */
+    public InstagramUnifiedAccount instagramUnifiedProfile(String accessToken) {
+        Map<String, Object> me = get(accessToken, "/me", Map.of("fields", "client_business_id"));
+        String clientBusinessId = string(me.get("client_business_id"));
+
+        Map<String, Object> body = get(accessToken, "/me/assigned_instagram_accounts",
+                Map.of("fields", "id,username", "limit", "100"));
+        List<Map<String, Object>> accounts = list(body.get("data"));
+        if (accounts.isEmpty()) {
+            return new InstagramUnifiedAccount(null, null, clientBusinessId);
+        }
+        Map<String, Object> account = accounts.get(0);
+        return new InstagramUnifiedAccount(
+                string(account.get("id")),
+                string(account.get("username")),
+                clientBusinessId);
+    }
+
+    /**
+     * Enables Instagram message notifications for a Unified Login account.
+     * The per-account subscription is required even when the dashboard already
+     * subscribes to the {@code messages} field.
+     */
+    public void subscribeInstagramUnified(String igUserId, String accessToken) {
+        postOnHost("graph.facebook.com", versionPath(igUserId + "/subscribed_apps"),
+                Map.of("subscribed_fields", "messages"), accessToken);
     }
 
     /**
@@ -146,26 +179,70 @@ public class MetaApiClient {
     }
 
     /**
-     * Facebook Login for Business returns a Page token. Instagram Messaging
-     * sends through the linked Page, using the customer's Instagram-scoped id.
+     * Sends an Instagram DM with an Instagram Login user access token. The
+     * customer id is the Instagram-scoped id from the webhook payload.
      */
-    public void sendInstagramText(String pageId, String pageAccessToken, String recipientId, String body) {
+    public void sendInstagramText(String accessToken, String recipientId, String body) {
         Map<String, Object> payload = Map.of(
                 "recipient", Map.of("id", recipientId),
                 "message", Map.of("text", body));
-        post(pageId + "/messages", payload, pageAccessToken);
+        postJsonOnHost("graph.instagram.com", versionPath("/me/messages"), payload, accessToken);
+    }
+
+    /**
+     * Sends an Instagram DM through Unified Login. The token belongs to the
+     * business integration system user, so the Instagram account id must be in
+     * the request path instead of {@code /me}.
+     */
+    public void sendInstagramUnifiedText(String igUserId, String accessToken,
+                                         String recipientId, String body) {
+        Map<String, Object> payload = Map.of(
+                "recipient", Map.of("id", recipientId),
+                "message", Map.of("text", body));
+        postJsonOnHost("graph.facebook.com", versionPath(igUserId + "/messages"),
+                payload, accessToken);
+    }
+
+    /**
+     * Instagram long-lived user tokens are valid for 60 days and can be
+     * refreshed once they are at least 24 hours old.
+     */
+    public MetaToken refreshInstagramToken(String accessToken) {
+        Map<String, Object> body = getOnHost("graph.instagram.com", "/refresh_access_token",
+                Map.of("grant_type", "ig_refresh_token", "access_token", accessToken));
+        String refreshed = string(body.get("access_token"));
+        if (refreshed == null || refreshed.isBlank()) {
+            throw new IllegalStateException("Instagram did not return a refreshed access token.");
+        }
+        return new MetaToken(refreshed, expiry(body.get("expires_in")));
     }
 
     private Map<String, Object> get(String accessToken, String path, Map<String, ?> query) {
+        return getOnHost("graph.facebook.com", versionPath(path), accessToken, query);
+    }
+
+    private Map<String, Object> getWithoutAuth(String path, Map<String, ?> query) {
+        return getOnHost("graph.facebook.com", versionPath(path), null, query);
+    }
+
+    private Map<String, Object> getOnHost(String host, String path, Map<String, ?> query) {
+        return getOnHost(host, path, null, query);
+    }
+
+    private Map<String, Object> getOnHost(String host, String path, String accessToken,
+                                          Map<String, ?> query) {
         try {
             Map<String, Object> body = restClient.get()
                     .uri(uriBuilder -> {
-                        uriBuilder.scheme("https").host("graph.facebook.com")
-                                .path(versionPath(path));
+                        uriBuilder.scheme("https").host(host).path(path);
                         query.forEach((key, value) -> uriBuilder.queryParam(key, value));
                         return uriBuilder.build();
                     })
-                    .headers(headers -> headers.setBearerAuth(accessToken))
+                    .headers(headers -> {
+                        if (accessToken != null) {
+                            headers.setBearerAuth(accessToken);
+                        }
+                    })
                     .retrieve()
                     .body(MAP_TYPE);
             return body == null ? Map.of() : body;
@@ -174,31 +251,37 @@ public class MetaApiClient {
         }
     }
 
-    private Map<String, Object> getWithoutAuth(String path, Map<String, ?> query) {
+    private Map<String, Object> post(String path, Object payload, String accessToken) {
+        return postJsonOnHost("graph.facebook.com", versionPath(path), payload, accessToken);
+    }
+
+    private Map<String, Object> postJsonOnHost(String host, String path, Object payload,
+                                               String accessToken) {
         try {
-            Map<String, Object> body = restClient.get()
-                    .uri(uriBuilder -> {
-                        uriBuilder.scheme("https").host("graph.facebook.com")
-                                .path(versionPath(path));
-                        query.forEach((key, value) -> uriBuilder.queryParam(key, value));
-                        return uriBuilder.build();
-                    })
+            Map<String, Object> body = restClient.post()
+                    .uri(uriBuilder -> uriBuilder.scheme("https").host(host)
+                            .path(path).build())
+                    .headers(headers -> headers.setBearerAuth(accessToken))
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(payload)
                     .retrieve()
                     .body(MAP_TYPE);
             return body == null ? Map.of() : body;
         } catch (RestClientException ex) {
-            throw failure("Meta token request failed", ex);
+            throw failure("Meta API request failed", ex);
         }
     }
 
-    private Map<String, Object> post(String path, Object payload, String accessToken) {
+    private Map<String, Object> postOnHost(String host, String path, Map<String, ?> query,
+                                           String accessToken) {
         try {
             Map<String, Object> body = restClient.post()
-                    .uri(uriBuilder -> uriBuilder.scheme("https").host("graph.facebook.com")
-                            .path(versionPath(path)).build())
+                    .uri(uriBuilder -> {
+                        uriBuilder.scheme("https").host(host).path(path);
+                        query.forEach((key, value) -> uriBuilder.queryParam(key, value));
+                        return uriBuilder.build();
+                    })
                     .headers(headers -> headers.setBearerAuth(accessToken))
-                    .contentType(MediaType.APPLICATION_JSON)
-                    .body(payload)
                     .retrieve()
                     .body(MAP_TYPE);
             return body == null ? Map.of() : body;
@@ -267,13 +350,17 @@ public class MetaApiClient {
     public record MetaToken(String accessToken, Instant expiresAt) {
     }
 
-    public record InstagramAccount(
-            String pageId,
-            String pageName,
-            String pageAccessToken,
-            String instagramId,
+    public record InstagramProfile(
+            String userId,
             String username,
-            String displayName) {
+            String name,
+            String accountType) {
+    }
+
+    public record InstagramUnifiedAccount(
+            String igUserId,
+            String username,
+            String clientBusinessId) {
     }
 
     public record WhatsAppAccount(

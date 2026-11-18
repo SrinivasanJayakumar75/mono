@@ -102,15 +102,30 @@ public class MetaWebhookService {
      */
     public boolean validSignature(byte[] body, String signature) {
         AppProperties.Channels.Meta metaProperties = properties.getChannels().getMeta();
-        if (!metaProperties.isConfigured() || signature == null || !signature.startsWith("sha256=")) {
+        if (signature == null || !signature.startsWith("sha256=")) {
+            return false;
+        }
+        byte[] actual;
+        try {
+            actual = HexFormat.of().parseHex(signature.substring("sha256=".length()).trim());
+        } catch (IllegalArgumentException ex) {
+            return false;
+        }
+        // WhatsApp webhooks are signed with the Meta app secret. Instagram
+        // webhooks use the dedicated Instagram product secret. Both belong to
+        // the same Meta app, so a signature matching either is authentic.
+        return matchesSecret(body, actual, metaProperties.getAppSecret())
+                || matchesSecret(body, actual, metaProperties.getInstagramAppSecret());
+    }
+
+    private boolean matchesSecret(byte[] body, byte[] actual, String secret) {
+        if (secret == null || secret.isBlank()) {
             return false;
         }
         try {
             Mac mac = Mac.getInstance("HmacSHA256");
-            mac.init(new SecretKeySpec(metaProperties.getAppSecret().getBytes(StandardCharsets.UTF_8),
-                    "HmacSHA256"));
+            mac.init(new SecretKeySpec(secret.getBytes(StandardCharsets.UTF_8), "HmacSHA256"));
             byte[] expected = mac.doFinal(body == null ? new byte[0] : body);
-            byte[] actual = HexFormat.of().parseHex(signature.substring("sha256=".length()).trim());
             return MessageDigest.isEqual(expected, actual);
         } catch (Exception ex) {
             log.warn("Could not verify a Meta webhook signature", ex);
@@ -274,7 +289,7 @@ public class MetaWebhookService {
             return false;
         }
 
-        String accessToken = accessToken(credential);
+        String accessToken = accessToken(event.channel(), credential);
         Map<String, String> metadata = metadata(credential.metadataJson());
         ContactRow contact = resolveContact(app.id(), event);
         ConversationRow conversation = resolveConversation(app.id(), contact.id(), event);
@@ -324,31 +339,47 @@ public class MetaWebhookService {
             return true;
         }
         Map<String, String> metadata = metadata(credential.metadataJson());
-        return accountId != null && accountId.equals(metadata.get("pageId"));
+        return accountId != null
+                && (accountId.equals(metadata.get("pageId"))
+                || accountId.equals(metadata.get("igUserId")));
     }
 
-    private String accessToken(Credential credential) {
+    private String accessToken(String channel, Credential credential) {
         String accessToken = crypto.decrypt(credential.encryptedAccessToken());
         if (isBlank(accessToken)) {
             throw new BadRequestException("The channel credential is missing. Reconnect the channel.");
         }
-        // WhatsApp long-lived user tokens can be refreshed before they expire.
-        // Instagram uses a Page token and is recovered by reconnecting.
+        Map<String, String> metadata = metadata(credential.metadataJson());
+        boolean unifiedInstagram = "INSTAGRAM".equals(channel)
+                && "true".equalsIgnoreCase(metadata.get("unifiedLogin"));
+        // WhatsApp long-lived user tokens use fb_exchange_token. Legacy
+        // Instagram Login tokens use the Instagram refresh endpoint. Unified
+        // Login tokens are business integration system user tokens that do not
+        // use that endpoint.
         if (credential.expiresAt() != null
                 && credential.expiresAt().isBefore(Instant.now().plus(Duration.ofDays(1)))) {
+            if (unifiedInstagram) {
+                throw new BadRequestException(
+                        "The Instagram connection expired. Reconnect Instagram "
+                                + "to receive messages again.");
+            }
             MetaApiClient.MetaToken refreshed;
             try {
-                refreshed = meta.refreshUserToken(accessToken);
+                refreshed = "INSTAGRAM".equals(channel)
+                        ? meta.refreshInstagramToken(accessToken)
+                        : meta.refreshUserToken(accessToken);
             } catch (RuntimeException ex) {
                 throw new BadRequestException(
-                        "The Meta connection expired. Reconnect WhatsApp to receive messages again.");
+                        "The Meta connection expired. Reconnect " + channel
+                                + " to receive messages again.");
             }
             jdbc.update("""
                     update channel_credentials
                     set encrypted_access_token = ?, token_expires_at = ?, updated_at = now()
-                    where channel = 'WHATSAPP'
+                    where channel = ?
                     """, crypto.encrypt(refreshed.accessToken()),
-                    refreshed.expiresAt() == null ? null : Timestamp.from(refreshed.expiresAt()));
+                    refreshed.expiresAt() == null ? null : Timestamp.from(refreshed.expiresAt()),
+                    channel);
             return refreshed.accessToken();
         }
         return accessToken;
@@ -486,12 +517,17 @@ public class MetaWebhookService {
                 meta.sendWhatsAppText(phoneNumberId, accessToken, event.senderId(),
                         truncate(body, 4_096));
             } else {
-                String pageId = metadata.get("pageId");
-                if (isBlank(pageId)) {
-                    throw new IllegalStateException("The Instagram Page id is missing.");
+                String igUserId = metadata.get("igUserId");
+                if (isBlank(igUserId)) {
+                    throw new IllegalStateException("The Instagram account id is missing.");
                 }
-                meta.sendInstagramText(pageId, accessToken, event.senderId(),
-                        truncate(body, 1_000));
+                if ("true".equalsIgnoreCase(metadata.get("unifiedLogin"))) {
+                    meta.sendInstagramUnifiedText(igUserId, accessToken, event.senderId(),
+                            truncate(body, 1_000));
+                } else {
+                    meta.sendInstagramText(accessToken, event.senderId(),
+                            truncate(body, 1_000));
+                }
             }
         } catch (RuntimeException ex) {
             log.warn("Could not send the {} reply to {}: {}",

@@ -71,6 +71,14 @@ monotron:
     meta:
       app-id: ${META_APP_ID:}
       app-secret: ${META_APP_SECRET:}
+      # Instagram API with Unified Login (the only setup available for Meta
+      # apps created after October 2026). It reuses META_APP_ID/SECRET plus the
+      # Facebook Login for Business configuration id.
+      instagram-config-id: ${META_INSTAGRAM_CONFIG_ID:}
+      # Legacy Instagram API with Instagram Login credentials. Only used when
+      # META_INSTAGRAM_CONFIG_ID is empty.
+      instagram-app-id: ${META_INSTAGRAM_APP_ID:}
+      instagram-app-secret: ${META_INSTAGRAM_APP_SECRET:}
       webhook-verify-token: ${META_WEBHOOK_VERIFY_TOKEN:}
       graph-version: ${META_GRAPH_VERSION:v23.0}
       whatsapp-redirect-uri: ${META_WHATSAPP_REDIRECT_URI:http://localhost:8080/api/channel-connections/WHATSAPP/oauth/callback}

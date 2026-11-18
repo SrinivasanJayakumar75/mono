@@ -25,10 +25,11 @@ class MetaWebhookServiceTest {
     @Test
     @DisplayName("the X-Hub-Signature-256 header is checked against the raw body")
     void verifiesMetaSignature() throws Exception {
-        MetaWebhookService service = service("app-secret", "verify-me");
+        MetaWebhookService service = service("app-secret", "instagram-secret", "verify-me");
         byte[] body = "{\"object\":\"instagram\"}".getBytes(StandardCharsets.UTF_8);
 
         assertThat(service.validSignature(body, signature("app-secret", body))).isTrue();
+        assertThat(service.validSignature(body, signature("instagram-secret", body))).isTrue();
         assertThat(service.validSignature(body, "sha256=00")).isFalse();
         assertThat(service.validSignature(body, null)).isFalse();
     }
@@ -36,17 +37,20 @@ class MetaWebhookServiceTest {
     @Test
     @DisplayName("the webhook verify token is compared exactly")
     void verifiesWebhookToken() {
-        MetaWebhookService service = service("app-secret", "verify-me");
+        MetaWebhookService service = service("app-secret", "instagram-secret", "verify-me");
 
         assertThat(service.validVerifyToken("verify-me")).isTrue();
         assertThat(service.validVerifyToken("wrong")).isFalse();
         assertThat(service.validVerifyToken(null)).isFalse();
     }
 
-    private static MetaWebhookService service(String appSecret, String verifyToken) {
+    private static MetaWebhookService service(String appSecret, String instagramAppSecret,
+                                              String verifyToken) {
         AppProperties properties = new AppProperties();
         properties.getChannels().getMeta().setAppId("app-id");
         properties.getChannels().getMeta().setAppSecret(appSecret);
+        properties.getChannels().getMeta().setInstagramAppId("instagram-app-id");
+        properties.getChannels().getMeta().setInstagramAppSecret(instagramAppSecret);
         properties.getChannels().getMeta().setWebhookVerifyToken(verifyToken);
         return new MetaWebhookService(
                 mock(JdbcTemplate.class),

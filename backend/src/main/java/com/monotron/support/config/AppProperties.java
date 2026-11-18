@@ -384,6 +384,20 @@ public class AppProperties {
         public static class Meta {
             private String appId = "";
             private String appSecret = "";
+            /**
+             * Instagram API with Unified Login reuses the Meta app id/secret
+             * and adds a Facebook Login for Business configuration id. This is
+             * the only setup available for Meta apps created after October
+             * 2026.
+             */
+            private String instagramConfigId = "";
+            /**
+             * Legacy Instagram API with Instagram Login credentials. They are
+             * only used when {@code instagramConfigId} is empty. New Meta apps
+             * do not have a separate Instagram app id or secret.
+             */
+            private String instagramAppId = "";
+            private String instagramAppSecret = "";
             private String webhookVerifyToken = "";
             private String graphVersion = "v23.0";
             private String whatsappRedirectUri =
@@ -405,6 +419,30 @@ public class AppProperties {
 
             public void setAppSecret(String appSecret) {
                 this.appSecret = appSecret;
+            }
+
+            public String getInstagramAppId() {
+                return instagramAppId;
+            }
+
+            public void setInstagramAppId(String instagramAppId) {
+                this.instagramAppId = instagramAppId;
+            }
+
+            public String getInstagramConfigId() {
+                return instagramConfigId;
+            }
+
+            public void setInstagramConfigId(String instagramConfigId) {
+                this.instagramConfigId = instagramConfigId;
+            }
+
+            public String getInstagramAppSecret() {
+                return instagramAppSecret;
+            }
+
+            public void setInstagramAppSecret(String instagramAppSecret) {
+                this.instagramAppSecret = instagramAppSecret;
             }
 
             public String getWebhookVerifyToken() {
@@ -439,16 +477,29 @@ public class AppProperties {
                 this.instagramRedirectUri = instagramRedirectUri;
             }
 
-            public String redirectUri(String channel) {
-                return "WHATSAPP".equalsIgnoreCase(channel) ? whatsappRedirectUri : instagramRedirectUri;
-            }
-
-            public boolean isConfigured() {
+            public boolean isWhatsAppConfigured() {
                 return hasText(appId) && hasText(appSecret);
             }
 
+            /** True when the Instagram credentials are available. */
+            public boolean isInstagramConfigured() {
+                if (!hasText(instagramRedirectUri)) {
+                    return false;
+                }
+                if (hasText(instagramConfigId)) {
+                    return hasText(appId) && hasText(appSecret);
+                }
+                return hasText(instagramAppId) && hasText(instagramAppSecret);
+            }
+
+            /** True when the newer Unified Login configuration is in use. */
+            public boolean isInstagramUnified() {
+                return hasText(instagramConfigId);
+            }
+
             public boolean isWebhookConfigured() {
-                return hasText(appSecret) && hasText(webhookVerifyToken);
+                return hasText(webhookVerifyToken)
+                        && (hasText(appSecret) || hasText(instagramAppSecret));
             }
         }
     }

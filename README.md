@@ -103,7 +103,9 @@ Useful configuration (all optional, see `backend/src/main/resources/application.
 | `GMAIL_CLIENT_ID` / `GMAIL_CLIENT_SECRET` | empty (Gmail connection disabled until both are set) |
 | `GMAIL_POLLING_ENABLED` | `true` (background Gmail import and auto-reply) |
 | `GMAIL_POLL_INTERVAL_MS` / `GMAIL_MAX_PER_POLL` | `30000` / `10` |
-| `META_APP_ID` / `META_APP_SECRET` | empty (WhatsApp and Instagram connections disabled until both are set) |
+| `META_APP_ID` / `META_APP_SECRET` | empty (WhatsApp and Instagram Unified Login disabled until both are set) |
+| `META_INSTAGRAM_CONFIG_ID` | empty (Instagram Unified Login configuration; required for new Meta apps) |
+| `META_INSTAGRAM_APP_ID` / `META_INSTAGRAM_APP_SECRET` | empty (legacy Instagram Login only; new Meta apps do not have a separate Instagram app id) |
 | `META_WEBHOOK_VERIFY_TOKEN` | empty (Meta webhook verification disabled until set) |
 | `APP_FRONTEND_BASE_URL` | `http://localhost:3000` (where OAuth callbacks return) |
 | `CHANNEL_CREDENTIALS_KEY` | empty (falls back to the JWT secret; set a dedicated value in production) |
@@ -201,42 +203,64 @@ disabled with `GMAIL_POLLING_ENABLED=false`.
 
 **WhatsApp and Instagram**
 
-1. Create a Meta app in [Meta for Developers](https://developers.facebook.com/apps/) and add
-   Facebook Login for Business.
-2. Add these redirect URIs (using your public backend host):
+WhatsApp uses **Facebook Login for Business**. Instagram uses **Instagram API with
+Unified Login**, which reuses the Meta app id/secret plus a Facebook Login for Business
+configuration id; it does not require a Facebook Page. Unified Login is the only setup
+available for Meta apps created after October 2026. Older apps that still expose
+**API setup with Instagram login** can keep using the legacy Instagram app id/secret by
+leaving `META_INSTAGRAM_CONFIG_ID` empty.
+
+1. Create a Meta app in [Meta for Developers](https://developers.facebook.com/apps/).
+   Add **Facebook Login for Business** for WhatsApp and the **Manage messaging & content
+   on Instagram** use case for Instagram.
+2. Add these redirect URIs (using your public backend host and HTTPS):
    `https://api.monotron.in/api/channel-connections/WHATSAPP/oauth/callback` and
    `https://api.monotron.in/api/channel-connections/INSTAGRAM/oauth/callback`.
-3. Set the backend variables:
+3. For Instagram, open **Use cases → Manage messaging & content on Instagram →
+   Customize → API setup with Unified login**, create a configuration that requests an
+   Instagram account plus `instagram_basic` and `instagram_manage_messages`, save the
+   Instagram redirect URL, and copy the **Configuration ID**.
+4. Set the backend variables:
 
    ```dotenv
    META_APP_ID=...
    META_APP_SECRET=...
+   META_INSTAGRAM_CONFIG_ID=...
    META_WEBHOOK_VERIFY_TOKEN=replace-with-a-random-string
    META_GRAPH_VERSION=v23.0
    META_WHATSAPP_REDIRECT_URI=https://api.monotron.in/api/channel-connections/WHATSAPP/oauth/callback
    META_INSTAGRAM_REDIRECT_URI=https://api.monotron.in/api/channel-connections/INSTAGRAM/oauth/callback
    ```
 
-4. In the Meta app dashboard, configure the webhook callback URL:
+   `META_INSTAGRAM_CONFIG_ID` is the Facebook Login for Business configuration id, not a
+   secret. The legacy variables `META_INSTAGRAM_APP_ID` and
+   `META_INSTAGRAM_APP_SECRET` are only read when `META_INSTAGRAM_CONFIG_ID` is empty.
+
+5. In the Meta app dashboard, configure the webhook callback URL:
 
    ```text
    https://api.monotron.in/api/channel-webhooks/meta
    ```
 
-   Use the same value as `META_WEBHOOK_VERIFY_TOKEN`. Subscribe to the `messages` field for
-   both the **WhatsApp Business Account** and **Instagram** objects.
+   Use the same value as `META_WEBHOOK_VERIFY_TOKEN`. Add the callback under the
+   **WhatsApp Business Account** object and under **Instagram > API setup with Unified
+   login > Configure webhooks**, and subscribe to the `messages` field.
 
-5. For WhatsApp, enable the Cloud API and add a phone number to the WhatsApp Business account.
-   Monotron subscribes the app to the WABA during connection. For Instagram, link the Instagram
-   professional account to a Facebook Page and grant the Page messaging permissions. Meta must
-   also have the Instagram `messages` webhook subscription enabled in the app dashboard.
+6. For WhatsApp, enable the Cloud API and add a phone number to the WhatsApp
+   Business account. For Instagram, use a public professional (Business or Creator)
+   account and grant `instagram_basic` and `instagram_manage_messages`. In Development
+   mode, add the Instagram account as an **Instagram Tester** and accept the invite in
+   Instagram. Monotron subscribes both accounts to their `messages` webhooks during
+   connection.
 
-6. Complete Meta's app review / business verification for the messaging permissions before
-   connecting production customer accounts.
+7. Complete Meta's app review / business verification for the messaging permissions
+   before connecting production customer accounts. Instagram messaging needs
+   Advanced Access to serve accounts you do not own.
 
-If the Meta user can manage more than one WhatsApp number or Instagram account, Monotron connects
-the first eligible account returned by the Graph API. Use a Meta user that only manages the account
-you want to connect, or disconnect and reconnect with the correct user.
+If the Meta user can manage more than one WhatsApp number, Monotron connects the first
+eligible number returned by the Graph API. For Instagram, Monotron connects the first
+Instagram professional account shared through the Meta login; use an account that shares
+only the Instagram account you want to connect, or disconnect and reconnect.
 
 WhatsApp and Instagram use signed webhooks for live ingestion, so no polling job is needed. Each
 inbound message becomes an inbox conversation. When **Enable channel** and **AI auto-reply** are
@@ -246,11 +270,16 @@ sent for text or captioned messages; media-only messages are imported with a pla
 agent can follow up. Meta requires the customer to have messaged the business within the last
 24 hours for a normal reply.
 
-Meta signs every POST with `X-Hub-Signature-256`; Monotron verifies it against the exact raw body
-using `META_APP_SECRET`. Webhook requests are public but contain no bearer token, and the workspace
-is resolved from the provider account id stored in `channel_account_lookup`.
+Meta signs every POST with `X-Hub-Signature-256`; Monotron verifies it against the exact raw body.
+WhatsApp and Unified Login webhooks are signed with `META_APP_SECRET`; legacy Instagram
+Login webhooks use `META_INSTAGRAM_APP_SECRET`, and either signature is accepted. Webhook
+requests are public but contain no bearer token, and the workspace is resolved from the
+provider account id stored in `channel_account_lookup`.
 
-The **Connect** buttons stay disabled until `META_APP_ID` and `META_APP_SECRET` are present.
+The **Connect** buttons stay disabled until the matching credentials are present:
+`META_APP_ID` + `META_APP_SECRET` for WhatsApp, and
+`META_APP_ID` + `META_APP_SECRET` + `META_INSTAGRAM_CONFIG_ID` for Instagram
+(or the legacy Instagram app id/secret when no configuration id is set).
 
 #### Polar subscriptions
 

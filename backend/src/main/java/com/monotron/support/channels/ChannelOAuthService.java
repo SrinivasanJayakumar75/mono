@@ -59,11 +59,17 @@ public class ChannelOAuthService {
             "business_management");
 
     private static final List<String> INSTAGRAM_SCOPES = List.of(
+            "instagram_business_basic",
+            "instagram_business_manage_messages");
+
+    /**
+     * Unified Login requests its permissions through the Facebook Login for
+     * Business configuration, but the granted permission names are stored with
+     * the connection for display and diagnostics.
+     */
+    private static final List<String> INSTAGRAM_UNIFIED_SCOPES = List.of(
             "instagram_basic",
-            "instagram_manage_messages",
-            "pages_show_list",
-            "pages_manage_metadata",
-            "business_management");
+            "instagram_manage_messages");
 
     private final AppProperties properties;
     private final ChannelOAuthStateService stateService;
@@ -106,7 +112,8 @@ public class ChannelOAuthService {
         String state = stateService.issue(principal.workspaceId(), normalized);
         String url = switch (normalized) {
             case "GMAIL" -> gmailAuthorizationUrl(state);
-            case "WHATSAPP", "INSTAGRAM" -> metaAuthorizationUrl(normalized, state);
+            case "WHATSAPP" -> whatsappAuthorizationUrl(state);
+            case "INSTAGRAM" -> instagramAuthorizationUrl(state);
             default -> throw new IllegalStateException("Unhandled channel " + normalized);
         };
         return new OAuthStartDto(normalized, url);
@@ -138,7 +145,8 @@ public class ChannelOAuthService {
         try {
             TokenResult tokens = switch (normalized) {
                 case "GMAIL" -> exchangeGmail(code);
-                case "WHATSAPP", "INSTAGRAM" -> exchangeMeta(normalized, code);
+                case "WHATSAPP" -> exchangeWhatsApp(code);
+                case "INSTAGRAM" -> exchangeInstagram(code);
                 default -> throw new IllegalStateException("Unhandled channel " + normalized);
             };
             save(parsed.workspaceId(), normalized, tokens);
@@ -188,25 +196,59 @@ public class ChannelOAuthService {
                 .toUriString();
     }
 
-    private String metaAuthorizationUrl(String channel, String state) {
+    private String whatsappAuthorizationUrl(String state) {
         AppProperties.Channels.Meta meta = properties.getChannels().getMeta();
-        if (!meta.isConfigured()) {
+        if (!meta.isWhatsAppConfigured()) {
             throw new ApiException(HttpStatus.CONFLICT,
-                    "Meta OAuth is not configured. Add META_APP_ID and META_APP_SECRET.");
+                    "WhatsApp OAuth is not configured. Add META_APP_ID and META_APP_SECRET.");
         }
         return UriComponentsBuilder.fromUriString(
                         "https://www.facebook.com/" + meta.getGraphVersion() + "/dialog/oauth")
                 .queryParam("client_id", meta.getAppId())
-                .queryParam("redirect_uri", meta.redirectUri(channel))
+                .queryParam("redirect_uri", meta.getWhatsappRedirectUri())
                 .queryParam("response_type", "code")
-                .queryParam("scope", String.join(",", scopes(channel)))
+                .queryParam("scope", String.join(",", WHATSAPP_SCOPES))
                 .queryParam("state", state)
                 .build()
                 .toUriString();
     }
 
-    private List<String> scopes(String channel) {
-        return "WHATSAPP".equals(channel) ? WHATSAPP_SCOPES : INSTAGRAM_SCOPES;
+    /**
+     * New Meta apps only expose Instagram API with Unified Login: it reuses
+     * the Meta app id/secret and a Facebook Login for Business config id.
+     * Older apps that still have the Instagram product use the legacy
+     * Instagram Login flow.
+     */
+    private String instagramAuthorizationUrl(String state) {
+        AppProperties.Channels.Meta meta = properties.getChannels().getMeta();
+        if (!meta.isInstagramConfigured()) {
+            throw new ApiException(HttpStatus.CONFLICT,
+                    "Instagram OAuth is not configured. Add META_INSTAGRAM_CONFIG_ID "
+                            + "(Unified Login) or META_INSTAGRAM_APP_ID / "
+                            + "META_INSTAGRAM_APP_SECRET (legacy Instagram Login).");
+        }
+        if (meta.isInstagramUnified()) {
+            return UriComponentsBuilder.fromUriString(
+                            "https://www.facebook.com/" + meta.getGraphVersion() + "/dialog/oauth")
+                    .queryParam("client_id", meta.getAppId())
+                    .queryParam("config_id", meta.getInstagramConfigId())
+                    .queryParam("redirect_uri", meta.getInstagramRedirectUri())
+                    .queryParam("response_type", "code")
+                    .queryParam("display", "popup")
+                    .queryParam("prompt", "login")
+                    .queryParam("state", state)
+                    .build()
+                    .toUriString();
+        }
+        return UriComponentsBuilder.fromUriString("https://www.instagram.com/oauth/authorize")
+                .queryParam("client_id", meta.getInstagramAppId())
+                .queryParam("redirect_uri", meta.getInstagramRedirectUri())
+                .queryParam("response_type", "code")
+                .queryParam("scope", String.join(",", INSTAGRAM_SCOPES))
+                .queryParam("enable_fb_login", "0")
+                .queryParam("state", state)
+                .build()
+                .toUriString();
     }
 
     private TokenResult exchangeGmail(String code) {
@@ -238,9 +280,9 @@ public class ChannelOAuthService {
         return new TokenResult(accessToken, refreshToken, expiresAt, scope, email, id, Map.of());
     }
 
-    private TokenResult exchangeMeta(String channel, String code) {
+    private TokenResult exchangeWhatsApp(String code) {
         AppProperties.Channels.Meta meta = properties.getChannels().getMeta();
-        String redirectUri = meta.redirectUri(channel);
+        String redirectUri = meta.getWhatsappRedirectUri();
 
         Map<String, Object> shortLived = restClient.get()
                 .uri(uriBuilder -> uriBuilder
@@ -277,9 +319,125 @@ public class ChannelOAuthService {
                 ? expiry(shortLived.get("expires_in"))
                 : expiry(longLived.get("expires_in"));
 
-        return "WHATSAPP".equals(channel)
-                ? whatsappToken(accessToken, expiresAt)
-                : instagramToken(accessToken);
+        return whatsappToken(accessToken, expiresAt);
+    }
+
+    /**
+     * Unified Login exchanges the code on graph.facebook.com and returns a
+     * Business Integration System User access token. The legacy Instagram
+     * Login flow exchanges on api.instagram.com and graph.instagram.com.
+     */
+    private TokenResult exchangeInstagram(String code) {
+        AppProperties.Channels.Meta meta = properties.getChannels().getMeta();
+        if (meta.isInstagramUnified()) {
+            return exchangeInstagramUnified(code, meta);
+        }
+        String redirectUri = meta.getInstagramRedirectUri();
+
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("client_id", meta.getInstagramAppId());
+        form.add("client_secret", meta.getInstagramAppSecret());
+        form.add("grant_type", "authorization_code");
+        form.add("redirect_uri", redirectUri);
+        form.add("code", code);
+
+        Map<String, Object> shortLived;
+        try {
+            shortLived = restClient.post()
+                    .uri("https://api.instagram.com/oauth/access_token")
+                    .contentType(MediaType.APPLICATION_FORM_URLENCODED)
+                    .body(form)
+                    .retrieve()
+                    .body(MAP_TYPE);
+        } catch (RestClientException ex) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Instagram rejected the authorization code. Check the Instagram app "
+                            + "credentials and redirect URI.", ex);
+        }
+        String shortToken = shortLived == null ? null : string(shortLived.get("access_token"));
+        if (shortToken == null) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Instagram did not return an access token.");
+        }
+
+        Map<String, Object> longLived;
+        try {
+            longLived = restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .scheme("https")
+                            .host("graph.instagram.com")
+                            .path("/access_token")
+                            .queryParam("grant_type", "ig_exchange_token")
+                            .queryParam("client_secret", meta.getInstagramAppSecret())
+                            .queryParam("access_token", shortToken)
+                            .build())
+                    .retrieve()
+                    .body(MAP_TYPE);
+        } catch (RestClientException ex) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Instagram rejected the token exchange.", ex);
+        }
+        String longLivedToken = longLived == null ? null : string(longLived.get("access_token"));
+        String accessToken = longLivedToken == null ? shortToken : longLivedToken;
+        Instant expiresAt = longLived == null
+                ? expiry(shortLived.get("expires_in"))
+                : expiry(longLived.get("expires_in"));
+
+        return instagramToken(accessToken, expiresAt);
+    }
+
+    private TokenResult exchangeInstagramUnified(String code, AppProperties.Channels.Meta meta) {
+        Map<String, Object> token;
+        try {
+            token = restClient.get()
+                    .uri(uriBuilder -> uriBuilder
+                            .scheme("https")
+                            .host("graph.facebook.com")
+                            .path("/" + meta.getGraphVersion() + "/oauth/access_token")
+                            .queryParam("client_id", meta.getAppId())
+                            .queryParam("client_secret", meta.getAppSecret())
+                            .queryParam("code", code)
+                            .build())
+                    .retrieve()
+                    .body(MAP_TYPE);
+        } catch (RestClientException ex) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Meta rejected the Instagram authorization code. Check the Unified Login "
+                            + "configuration and the redirect URI.", ex);
+        }
+        String accessToken = token == null ? null : string(token.get("access_token"));
+        if (accessToken == null || accessToken.isBlank()) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Meta did not return an Instagram access token.");
+        }
+        return instagramUnifiedToken(accessToken, expiry(token.get("expires_in")));
+    }
+
+    private TokenResult instagramUnifiedToken(String accessToken, Instant expiresAt) {
+        MetaApiClient.InstagramUnifiedAccount account =
+                metaApiClient.instagramUnifiedProfile(accessToken);
+        if (account.igUserId() == null || account.igUserId().isBlank()) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Meta did not return an Instagram professional account for this login.");
+        }
+        try {
+            metaApiClient.subscribeInstagramUnified(account.igUserId(), accessToken);
+        } catch (RuntimeException ex) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Instagram connected, but Meta rejected the webhook subscription: "
+                            + ex.getMessage(), ex);
+        }
+
+        Map<String, String> metadata = new LinkedHashMap<>();
+        metadata.put("igUserId", account.igUserId());
+        metadata.put("username", blankToEmpty(account.username()));
+        metadata.put("clientBusinessId", blankToEmpty(account.clientBusinessId()));
+        metadata.put("unifiedLogin", "true");
+        metadata.put("tokenType", "SUAT");
+        String label = firstNonBlank(account.username(), "Instagram");
+        return new TokenResult(accessToken, null, expiresAt,
+                String.join(",", INSTAGRAM_UNIFIED_SCOPES), label,
+                account.igUserId(), metadata);
     }
 
     private TokenResult whatsappToken(String accessToken, Instant expiresAt) {
@@ -308,25 +466,27 @@ public class ChannelOAuthService {
                 String.join(",", WHATSAPP_SCOPES), label, account.phoneNumberId(), metadata);
     }
 
-    private TokenResult instagramToken(String userAccessToken) {
-        List<MetaApiClient.InstagramAccount> accounts = metaApiClient.instagramAccounts(userAccessToken);
-        if (accounts.isEmpty()) {
+    private TokenResult instagramToken(String accessToken, Instant expiresAt) {
+        MetaApiClient.InstagramProfile account = metaApiClient.instagramProfile(accessToken);
+        if (account.userId() == null || account.userId().isBlank()) {
             throw new ApiException(HttpStatus.BAD_GATEWAY,
-                    "Meta did not return an Instagram professional account linked to a Facebook Page. "
-                            + "Link the Instagram account to a Page and grant the Page permissions.");
+                    "Instagram did not return a professional account for the authorized user.");
         }
-        MetaApiClient.InstagramAccount account = accounts.get(0);
+        try {
+            metaApiClient.subscribeInstagram(account.userId(), accessToken);
+        } catch (RuntimeException ex) {
+            throw new ApiException(HttpStatus.BAD_GATEWAY,
+                    "Instagram connected, but Meta rejected the webhook subscription: "
+                            + ex.getMessage(), ex);
+        }
+
         Map<String, String> metadata = new LinkedHashMap<>();
-        metadata.put("pageId", account.pageId());
-        metadata.put("igUserId", account.instagramId());
+        metadata.put("igUserId", account.userId());
         metadata.put("username", blankToEmpty(account.username()));
-        metadata.put("pageName", blankToEmpty(account.pageName()));
-        String label = firstNonBlank(
-                account.username(), account.displayName(), account.pageName(), "Instagram");
-        // A long-lived Page token is used for Instagram Messaging. It does not
-        // have a conventional refresh token; reconnecting is the recovery path.
-        return new TokenResult(account.pageAccessToken(), null, null,
-                String.join(",", INSTAGRAM_SCOPES), label, account.instagramId(), metadata);
+        metadata.put("accountType", blankToEmpty(account.accountType()));
+        String label = firstNonBlank(account.username(), account.name(), "Instagram");
+        return new TokenResult(accessToken, null, expiresAt,
+                String.join(",", INSTAGRAM_SCOPES), label, account.userId(), metadata);
     }
 
     private Map<String, Object> postForm(String url, MultiValueMap<String, String> form) {

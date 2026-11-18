@@ -224,16 +224,21 @@ public class ChannelOutboundService {
         String recipient = externalRecipient(target, "INSTAGRAM");
         MetaCredential credential = metaCredential("INSTAGRAM");
         Map<String, String> metadata = metadata(credential.metadataJson());
-        String pageId = clean(metadata.get("pageId"));
-        if (pageId == null) {
+        String igUserId = clean(metadata.get("igUserId"));
+        if (igUserId == null) {
             throw new BadRequestException(
-                    "The Instagram connection is missing its Page id. Reconnect Instagram.");
+                    "The Instagram connection is missing its account id. Reconnect Instagram.");
         }
 
         String accessToken = metaAccessToken(credential, "INSTAGRAM");
         try {
-            meta.sendInstagramText(pageId, accessToken, recipient,
-                    truncate(body, INSTAGRAM_MAX_LENGTH));
+            if ("true".equalsIgnoreCase(metadata.get("unifiedLogin"))) {
+                meta.sendInstagramUnifiedText(igUserId, accessToken, recipient,
+                        truncate(body, INSTAGRAM_MAX_LENGTH));
+            } else {
+                meta.sendInstagramText(accessToken, recipient,
+                        truncate(body, INSTAGRAM_MAX_LENGTH));
+            }
         } catch (RuntimeException ex) {
             log.warn("Instagram rejected an agent reply for conversation {}", target.id(), ex);
             throw new BadRequestException(
@@ -286,9 +291,17 @@ public class ChannelOutboundService {
         }
         if (credential.expiresAt() != null
                 && credential.expiresAt().isBefore(Instant.now().plus(Duration.ofDays(1)))) {
+            Map<String, String> metadata = metadata(credential.metadataJson());
+            if ("INSTAGRAM".equals(channel)
+                    && "true".equalsIgnoreCase(metadata.get("unifiedLogin"))) {
+                throw new BadRequestException(
+                        "The Instagram connection has expired. Reconnect it before replying.");
+            }
             MetaApiClient.MetaToken refreshed;
             try {
-                refreshed = meta.refreshUserToken(accessToken);
+                refreshed = "INSTAGRAM".equals(channel)
+                        ? meta.refreshInstagramToken(accessToken)
+                        : meta.refreshUserToken(accessToken);
             } catch (RuntimeException ex) {
                 throw new BadRequestException(
                         "The " + channel + " connection has expired. Reconnect it before replying.");

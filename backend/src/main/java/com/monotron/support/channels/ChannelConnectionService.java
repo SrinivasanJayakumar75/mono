@@ -85,7 +85,8 @@ public class ChannelConnectionService {
     private boolean oauthAvailable(String channel) {
         return switch (channel) {
             case "GMAIL" -> properties.getChannels().getGmail().isConfigured();
-            case "WHATSAPP", "INSTAGRAM" -> properties.getChannels().getMeta().isConfigured();
+            case "WHATSAPP" -> properties.getChannels().getMeta().isWhatsAppConfigured();
+            case "INSTAGRAM" -> properties.getChannels().getMeta().isInstagramConfigured();
             default -> false;
         };
     }
